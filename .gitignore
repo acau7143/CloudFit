@@ -1,0 +1,17 @@
+# 인증/비밀 정보 (절대 올리면 안 됨)
+*.pem
+*.csv
+.env
+credentials
+*.key
+
+# 파이썬 관련
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# OS/에디터 파일
+.DS_Store
+Thumbs.db
+.vscode/
