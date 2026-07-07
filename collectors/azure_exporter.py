@@ -20,6 +20,7 @@ from typing import Any, Dict, Optional
 from azure.core.exceptions import ClientAuthenticationError, HttpResponseError, ServiceRequestError
 from azure.identity import ClientSecretCredential
 from azure.mgmt.monitor import MonitorManagementClient
+from azure.monitor.query import LogsQueryClient, LogsQueryStatus
 from dotenv import load_dotenv
 
 
@@ -50,6 +51,7 @@ def load_config() -> Dict[str, str]:
         "subscription_id": os.getenv("AZURE_SUBSCRIPTION_ID"),
         "resource_group": os.getenv("AZURE_RESOURCE_GROUP"),
         "vm_name": os.getenv("AZURE_VM_NAME"),
+        "workspace_id": os.getenv("AZURE_LOG_WORKSPACE_ID"),
         "region": os.getenv("AZURE_REGION", DEFAULT_REGION),
     }
 
@@ -174,6 +176,115 @@ def query_cpu_metric(
     raise RuntimeError(f"Azure Monitor CPU 조회 실패: {last_error}")
 
 
+def query_guest_metrics(
+    client: LogsQueryClient,
+    workspace_id: str,
+    vm_name: str,
+    max_retries: int = 2,
+) -> Dict[str, Optional[Any]]:
+    """
+    Log Analytics Workspace의 Perf 테이블에서
+    VM의 메모리 사용률과 루트 디스크 사용률을 조회한다.
+
+    조회 대상:
+    - Memory / % Used Memory
+    - Logical Disk / % Used Space / InstanceName="/"
+    """
+
+    query = f"""
+Perf
+| where Computer =~ "{vm_name}"
+| where CounterName in ("% Used Memory", "% Used Space")
+| where CounterName == "% Used Memory"
+    or (CounterName == "% Used Space" and InstanceName == "/")
+| order by TimeGenerated desc
+| project TimeGenerated, CounterName, InstanceName, CounterValue
+"""
+
+    last_error: Optional[Exception] = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            result = client.query_workspace(
+                workspace_id=workspace_id,
+                query=query,
+                timespan=timedelta(hours=1),
+            )
+
+            if result.status == LogsQueryStatus.PARTIAL:
+                tables = result.partial_data
+
+                if result.partial_error is not None:
+                    print(
+                        f"[WARN] Log Analytics 일부 결과만 반환됨: {result.partial_error}",
+                        file=sys.stderr,
+                    )
+            else:
+                tables = result.tables
+
+            if not tables:
+                return {
+                    "memory_percent": None,
+                    "disk_percent": None,
+                }
+
+            table = tables[0]
+
+            # azure-monitor-query 2.0.0에서는 columns가 문자열 목록이다.
+            columns = list(table.columns)
+
+            rows = [
+                dict(zip(columns, row))
+                for row in table.rows
+            ]
+
+            memory_percent: Optional[float] = None
+            disk_percent: Optional[float] = None
+
+            for row in rows:
+                counter_name = row.get("CounterName")
+                instance_name = row.get("InstanceName")
+                counter_value = row.get("CounterValue")
+
+                if (
+                    counter_name == "% Used Memory"
+                    and memory_percent is None
+                    and counter_value is not None
+                ):
+                    memory_percent = round(float(counter_value), 2)
+
+                if (
+                    counter_name == "% Used Space"
+                    and instance_name == "/"
+                    and disk_percent is None
+                    and counter_value is not None
+                ):
+                    disk_percent = round(float(counter_value), 2)
+
+                if memory_percent is not None and disk_percent is not None:
+                    break
+
+            return {
+                "memory_percent": memory_percent,
+                "disk_percent": disk_percent,
+            }
+
+        except (HttpResponseError, ServiceRequestError) as error:
+            last_error = error
+
+            if attempt < max_retries:
+                time.sleep(2)
+                continue
+
+            raise RuntimeError(
+                f"Log Analytics 메모리/디스크 조회 실패: {error}"
+            ) from error
+
+    raise RuntimeError(
+        f"Log Analytics 메모리/디스크 조회 실패: {last_error}"
+    )
+
+
 def collect_resource_metrics(resource_uri: Optional[str] = None) -> Dict[str, Any]:
     """
     Azure VM 자원 메트릭을 수집한다.
@@ -189,13 +300,25 @@ def collect_resource_metrics(resource_uri: Optional[str] = None) -> Dict[str, An
     config = load_config()
     credential = build_credential(config)
 
-    client = MonitorManagementClient(
+    monitor_client = MonitorManagementClient(
         credential=credential,
         subscription_id=config["subscription_id"],
     )
 
+    logs_client = LogsQueryClient(credential)
+
     target_resource_uri = resource_uri or build_resource_uri(config)
-    cpu_result = query_cpu_metric(client, target_resource_uri)
+
+    cpu_result = query_cpu_metric(
+        monitor_client,
+        target_resource_uri,
+    )
+
+    guest_result = query_guest_metrics(
+        logs_client,
+        config["workspace_id"],
+        config["vm_name"],
+    )
 
     return {
         "cloud": "azure",
@@ -205,8 +328,8 @@ def collect_resource_metrics(resource_uri: Optional[str] = None) -> Dict[str, An
         "metric_name": "Percentage CPU",
         "timestamp": cpu_result["timestamp"],
         "cpu_percent": cpu_result["cpu_percent"],
-        "memory_percent": None,
-        "disk_percent": None,
+        "memory_percent": guest_result["memory_percent"],
+        "disk_percent": guest_result["disk_percent"],
         "source": "actual",
     }
 
@@ -245,6 +368,18 @@ def run_dry_run() -> None:
     if record["cpu_percent"] is None:
         print(
             "\n[주의] CPU 값이 null입니다. VM이 꺼져 있거나, 최근 30분 내 Azure Monitor 메트릭이 없을 수 있습니다.",
+            file=sys.stderr,
+        )
+
+    if record["memory_percent"] is None:
+        print(
+            "\n[주의] 메모리 값이 null입니다. AMA, DCR, LAW 데이터 유입 상태를 확인하세요.",
+            file=sys.stderr,
+        )
+
+    if record["disk_percent"] is None:
+        print(
+            "\n[주의] 디스크 값이 null입니다. 루트 파일시스템(/)의 Perf 데이터가 있는지 확인하세요.",
             file=sys.stderr,
         )
 
