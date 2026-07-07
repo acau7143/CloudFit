@@ -19,6 +19,7 @@ from typing import Any, Dict, Optional
 
 from azure.core.exceptions import ClientAuthenticationError, HttpResponseError, ServiceRequestError
 from azure.identity import ClientSecretCredential
+from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.monitor import MonitorManagementClient
 from azure.monitor.query import LogsQueryClient, LogsQueryStatus
 from dotenv import load_dotenv
@@ -285,22 +286,88 @@ Perf
     )
 
 
+def query_vm_spec(
+    client: ComputeManagementClient,
+    resource_group: str,
+    vm_name: str,
+    region: str,
+) -> Dict[str, Optional[Any]]:
+    """
+    Azure Compute API에서 VM의 크기와 하드웨어 사양을 조회한다.
+
+    반환:
+    - instance_type: VM Size 이름
+    - vcpu: vCPU 개수
+    - ram_gb: 메모리 용량(GB)
+    """
+
+    vm = client.virtual_machines.get(
+        resource_group_name=resource_group,
+        vm_name=vm_name,
+    )
+
+    if vm.hardware_profile is None or vm.hardware_profile.vm_size is None:
+        raise RuntimeError("VM Size 정보를 확인할 수 없습니다.")
+
+    vm_size = str(vm.hardware_profile.vm_size)
+
+    vcpu: Optional[int] = None
+    ram_gb: Optional[float] = None
+
+    skus = client.resource_skus.list(
+        filter=f"location eq '{region}'"
+    )
+
+    for sku in skus:
+        if sku.resource_type != "virtualMachines":
+            continue
+
+        if sku.name != vm_size:
+            continue
+
+        capabilities = {
+            capability.name: capability.value
+            for capability in (sku.capabilities or [])
+        }
+
+        vcpu_value = capabilities.get("vCPUs")
+        memory_value = capabilities.get("MemoryGB")
+
+        if vcpu_value is not None:
+            vcpu = int(float(vcpu_value))
+
+        if memory_value is not None:
+            ram_gb = float(memory_value)
+
+        break
+
+    return {
+        "instance_type": vm_size,
+        "vcpu": vcpu,
+        "ram_gb": ram_gb,
+    }
+
+
 def collect_resource_metrics(resource_uri: Optional[str] = None) -> Dict[str, Any]:
     """
-    Azure VM 자원 메트릭을 수집한다.
+    Azure VM의 자원 메트릭과 인스턴스 사양을 수집한다.
 
-    현재 Day 04 범위:
+    수집 대상:
     - CPU: Azure Monitor Percentage CPU
-    - memory_percent: 아직 수집하지 않으므로 None
-    - disk_percent: 아직 수집하지 않으므로 None
-
-    메모리/디스크는 Azure Monitor Agent 설정이 필요할 수 있으므로 다음 단계에서 확장한다.
+    - Memory: Log Analytics Workspace Perf 테이블
+    - Disk: Log Analytics Workspace Perf 테이블
+    - VM Spec: Azure Compute API
     """
 
     config = load_config()
     credential = build_credential(config)
 
     monitor_client = MonitorManagementClient(
+        credential=credential,
+        subscription_id=config["subscription_id"],
+    )
+
+    compute_client = ComputeManagementClient(
         credential=credential,
         subscription_id=config["subscription_id"],
     )
@@ -320,6 +387,13 @@ def collect_resource_metrics(resource_uri: Optional[str] = None) -> Dict[str, An
         config["vm_name"],
     )
 
+    vm_spec = query_vm_spec(
+        compute_client,
+        config["resource_group"],
+        config["vm_name"],
+        config["region"],
+    )
+
     return {
         "cloud": "azure",
         "resource_id": config["vm_name"],
@@ -330,6 +404,10 @@ def collect_resource_metrics(resource_uri: Optional[str] = None) -> Dict[str, An
         "cpu_percent": cpu_result["cpu_percent"],
         "memory_percent": guest_result["memory_percent"],
         "disk_percent": guest_result["disk_percent"],
+        "instance_type": vm_spec["instance_type"],
+        "vcpu": vm_spec["vcpu"],
+        "ram_gb": vm_spec["ram_gb"],
+        "cost_monthly": None,
         "source": "actual",
     }
 
@@ -351,6 +429,10 @@ def to_common_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         "cpu_percent": raw["cpu_percent"],
         "memory_percent": raw["memory_percent"],
         "disk_percent": raw["disk_percent"],
+        "instance_type": raw["instance_type"],
+        "vcpu": raw["vcpu"],
+        "ram_gb": raw["ram_gb"],
+        "cost_monthly": raw["cost_monthly"],
         "source": raw["source"],
     }
 
