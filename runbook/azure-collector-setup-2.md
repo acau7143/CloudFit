@@ -12,20 +12,12 @@ Azure VM의 자원 사용량과 인스턴스 사양 정보를 수집하고, AWS/
 - VM 인스턴스 타입
 - vCPU 수
 - RAM 용량
-- Resource Group 범위의 일별 비용
-- 서비스별 비용 구분
 
-자원 메트릭 레코드와 비용 레코드는 현재 별도 구조로 출력한다.
+비용 정보는 아직 수집하지 않으므로 현재 단계에서는 다음과 같이 처리한다.
 
 ```text
-RESOURCE METRICS
-→ CPU / Memory / Disk / VM Spec
-
-COST RECORDS
-→ Date / Cost USD / Service / Granularity
+cost_monthly: null
 ```
-
-자원 메트릭 레코드의 `cost_monthly`는 아직 직접 연결하지 않았으므로 현재 `null`을 유지한다. 실제 비용은 별도의 Cost Records에서 출력한다.
 
 현재 수집 흐름은 다음과 같다.
 
@@ -65,31 +57,11 @@ query_vm_spec()
   └── ram_gb
 
 
-Cost
-Azure Cost Management
-  ↓
-CostManagementClient
-  ↓
-collect_cost()
-  ↓
-to_usd()
-  ↓
-to_common_cost_record()
-
-
-자원 수집 결과
+모든 수집 결과
   ↓
 collect_resource_metrics()
   ↓
 to_common_record()
-
-비용 수집 결과
-  ↓
-collect_cost()
-  ↓
-to_common_cost_record()
-
-모든 결과
   ↓
 --dry-run JSON 출력
 ```
@@ -147,19 +119,17 @@ RAM: 1.0 GB
 
 Azure API를 사람 계정의 대화형 로그인 없이 호출하기 위해 Service Principal을 사용한다.
 
-현재 테스트 환경의 역할과 범위:
+현재 테스트 환경의 역할:
 
 ```text
 Monitoring Reader
-→ rg-finops-test 리소스 그룹 범위
-→ Azure Monitor 자원 메트릭 조회
-
-Cost Management 판독기
-→ Subscription 범위
-→ Cost Management 비용 데이터 읽기
 ```
 
-비용 조회는 읽기만 필요하므로 Cost Management 참가자가 아닌 판독기 역할을 사용한다.
+권한 범위:
+
+```text
+rg-finops-test 리소스 그룹
+```
 
 Python에서는 다음 인증 객체를 사용한다.
 
@@ -230,14 +200,13 @@ py -m pip install azure-identity
 py -m pip install azure-mgmt-monitor
 py -m pip install azure-monitor-query
 py -m pip install azure-mgmt-compute
-py -m pip install azure-mgmt-costmanagement
 py -m pip install python-dotenv
 ```
 
 한 번에 설치하는 경우:
 
 ```powershell
-py -m pip install azure-identity azure-mgmt-monitor azure-monitor-query azure-mgmt-compute azure-mgmt-costmanagement python-dotenv
+py -m pip install azure-identity azure-mgmt-monitor azure-monitor-query azure-mgmt-compute python-dotenv
 ```
 
 설치 확인 예시:
@@ -250,16 +219,11 @@ py -m pip show azure-monitor-query
 py -m pip show azure-mgmt-compute
 ```
 
-```powershell
-py -m pip show azure-mgmt-costmanagement
-```
-
 확인된 개발 환경 기준:
 
 ```text
 azure-monitor-query: 2.0.0
 azure-mgmt-compute: 38.1.0
-azure-mgmt-costmanagement: 5.0.0
 ```
 
 ---
@@ -635,259 +599,7 @@ ram_gb: 1.0
 
 ---
 
-# 10. Azure Cost Management 비용 수집
-
-## 10.1 수집 목적
-
-Azure VM의 자원 사용률과 실제 비용을 함께 분석하여 비용 대비 활용률을 비교하고, 불필요한 자원이나 연결 리소스 비용을 식별하기 위해 비용 데이터를 수집한다.
-
-Azure Monitor는 자원 메트릭을 제공하고, 비용 데이터는 Cost Management API에서 별도로 조회한다.
-
-흐름:
-
-```text
-Azure Cost Management
-        ↓
-CostManagementClient
-        ↓
-collect_cost()
-        ↓
-Daily Cost 조회
-        ↓
-ServiceName + ResourceId 그룹화
-        ↓
-to_usd()
-        ↓
-to_common_cost_record()
-        ↓
-공통 비용 레코드
-```
-
----
-
-## 10.2 SDK 및 권한
-
-필요 패키지:
-
-```powershell
-py -m pip install azure-mgmt-costmanagement
-```
-
-확인된 버전:
-
-```text
-azure-mgmt-costmanagement: 5.0.0
-```
-
-비용 조회 권한:
-
-```text
-대상: finops-collector
-역할: Cost Management 판독기
-범위: Subscription
-```
-
----
-
-## 10.3 조회 범위와 Query 기준
-
-현재 비용 Query 설정:
-
-```text
-Scope: rg-finops-test Resource Group
-Type: ActualCost
-Timeframe: Custom
-Lookback: 최근 7일
-Granularity: Daily
-Aggregation: Cost Sum
-Grouping:
-- ServiceName
-- ResourceId
-```
-
-Resource Group 범위로 조회하여 테스트 프로젝트 관련 비용을 중심으로 분석한다.
-
----
-
-## 10.4 최초 비용 API 호출 결과
-
-최초 조회에서 확인한 기본 컬럼:
-
-```text
-Cost
-UsageDate
-Currency
-```
-
-결과 예시 형식:
-
-```text
-[비용, 20260707, 'KRW']
-```
-
-이 결과는 코드에 작성한 예시값이 아니라 Cost Management API가 실제 조회한 결과다.
-
----
-
-## 10.5 서비스 및 리소스별 비용 분석
-
-VM을 실행하지 않은 기간에도 비용이 조회되어 `ServiceName`과 `ResourceId` 기준으로 원인을 확인했다.
-
-확인된 서비스 범주:
-
-```text
-Storage
-Virtual Network
-Virtual Machines
-Bandwidth
-Log Analytics
-```
-
-ResourceId 기준으로 확인한 관계:
-
-```text
-Storage
-→ 테스트 VM의 OS Disk
-
-Virtual Network
-→ 테스트 VM 관련 Public IP
-
-Virtual Machines
-→ 테스트 VM 본체
-
-Bandwidth
-→ 테스트 VM 관련 네트워크 사용
-
-Log Analytics
-→ Log Analytics Workspace
-```
-
-확인 결과, VM Compute 비용이 0인 기간에도 OS Disk와 Public IP 관련 비용이 발생할 수 있음을 비용 데이터 기준으로 확인했다.
-
----
-
-## 10.6 collect_cost()
-
-수집 함수:
-
-```text
-collect_cost()
-```
-
-Azure API 원본 row는 다음 순서로 반환된다.
-
-```text
-[
-    Cost,
-    UsageDate,
-    ServiceName,
-    ResourceId,
-    Currency
-]
-```
-
-수집기에서는 `columns`와 `rows`를 결합해 Dictionary 형태로 변환한다.
-
-```python
-rows = [
-    dict(zip(columns, row))
-    for row in (result.rows or [])
-]
-```
-
-변환 결과:
-
-```text
-{
-    "Cost": ...,
-    "UsageDate": ...,
-    "ServiceName": ...,
-    "ResourceId": ...,
-    "Currency": ...
-}
-```
-
----
-
-## 10.7 USD 변환
-
-현재 프로젝트에서는 클라우드별 비용 단위를 통일하기 위해 USD로 변환한다.
-
-개발 단계의 고정 환율:
-
-```text
-1 USD = 1350 KRW
-```
-
-지원 통화:
-
-```text
-KRW
-USD
-```
-
-변환 함수:
-
-```text
-to_usd()
-```
-
-KRW 변환식:
-
-```text
-USD 비용 = KRW 비용 / 1350
-```
-
-예:
-
-```text
-1350 KRW
-→ 1.0 USD
-```
-
-지원하지 않는 통화가 입력되면 임의 환율을 적용하지 않고 `ValueError`를 발생시킨다.
-
-현재 고정 환율은 개발 및 변환 검증용이며, 추후 팀 합의나 환율 정책 변경 시 수정할 수 있다.
-
----
-
-## 10.8 공통 비용 레코드
-
-변환 함수:
-
-```text
-to_common_cost_record()
-```
-
-현재 출력 필드:
-
-| 필드 | 의미 |
-|------|------|
-| `cloud` | 클라우드 제공자 |
-| `date` | 비용 발생 날짜 |
-| `cost_usd` | USD 변환 비용 |
-| `currency` | 통일된 비용 통화 |
-| `service` | Azure ServiceName |
-| `granularity` | 비용 집계 단위 |
-
-예:
-
-```json
-{
-  "cloud": "azure",
-  "date": "2026-07-07",
-  "cost_usd": 0.119029,
-  "currency": "USD",
-  "service": "Storage",
-  "granularity": "DAILY"
-}
-```
-
-현재 공통 비용 레코드 형식은 팀 공통 비용 스키마 최종 합의 전의 임시 기준이다. 팀 미팅 후 변경 사항이 발생하면 차주 계획 시작 전에 `to_common_cost_record()`와 관련 테스트를 수정한다.
-
----
-
-# 11. azure_exporter.py 구조
+# 10. azure_exporter.py 구조
 
 현재 주요 함수 역할:
 
@@ -901,12 +613,9 @@ to_common_cost_record()
 | `query_cpu_metric()` | CPU 사용률을 조회한다. |
 | `query_guest_metrics()` | LAW에서 메모리와 디스크 사용률을 조회한다. |
 | `query_vm_spec()` | VM 타입, vCPU, RAM 정보를 조회한다. |
-| `to_usd()` | 원본 비용을 USD 단위로 변환한다. |
-| `to_common_cost_record()` | Azure 비용 데이터를 공통 비용 레코드로 변환한다. |
-| `collect_cost()` | Resource Group 범위의 일별 비용을 조회한다. |
-| `collect_resource_metrics()` | 여러 API의 자원 수집 결과를 하나의 raw 데이터로 합친다. |
-| `to_common_record()` | 자원 데이터를 팀 공통 JSON 형식으로 변환한다. |
-| `run_dry_run()` | 자원 메트릭과 비용 레코드를 서버 전송 없이 출력한다. |
+| `collect_resource_metrics()` | 여러 API의 수집 결과를 하나의 raw 데이터로 합친다. |
+| `to_common_record()` | 팀 공통 JSON 형식으로 변환한다. |
+| `run_dry_run()` | 서버나 DB로 전송하지 않고 수집 결과를 출력한다. |
 
 전체 흐름:
 
@@ -932,22 +641,13 @@ collect_resource_metrics()
         ▼
 to_common_record()
         │
-        └── RESOURCE METRICS
-
-collect_cost()
-        │
         ▼
-to_common_cost_record()
-        │
-        ├── to_usd()
-        └── COST RECORDS
+JSON
 ```
 
 ---
 
-# 12. 공통 출력 필드
-
-## 12.1 자원 메트릭 레코드
+# 11. 공통 출력 필드
 
 | 필드 | 의미 |
 |------|------|
@@ -962,23 +662,12 @@ to_common_cost_record()
 | `instance_type` | Azure VM Size |
 | `vcpu` | VM의 vCPU 수 |
 | `ram_gb` | VM의 RAM 용량 |
-| `cost_monthly` | 자원 레코드에는 아직 직접 연결하지 않아 현재 `null` |
+| `cost_monthly` | 월 비용. 현재 미수집이므로 `null` |
 | `source` | 실제 수집 데이터 여부 |
-
-## 12.2 비용 레코드
-
-| 필드 | 의미 |
-|------|------|
-| `cloud` | 클라우드 제공자 |
-| `date` | 비용 발생 날짜 (`YYYY-MM-DD`) |
-| `cost_usd` | USD로 변환한 비용 |
-| `currency` | 공통 통화 단위 `USD` |
-| `service` | Azure ServiceName |
-| `granularity` | 비용 집계 단위 `DAILY` |
 
 ---
 
-# 13. dry-run 실행
+# 12. dry-run 실행
 
 프로젝트 루트에서 실행한다.
 
@@ -986,19 +675,7 @@ to_common_cost_record()
 py collectors\azure_exporter.py --dry-run
 ```
 
-현재 dry-run은 자원 메트릭과 비용 레코드를 함께 출력한다.
-
-출력 구조:
-
-```text
-=== RESOURCE METRICS ===
-자원 사용률 및 VM 사양
-
-=== COST RECORDS ===
-USD 변환된 일별·서비스별 비용
-```
-
-자원 레코드 예시:
+현재 단계의 정상 출력 예시:
 
 ```json
 {
@@ -1006,10 +683,10 @@ USD 변환된 일별·서비스별 비용
   "resource_id": "vm-finops-azure-test",
   "resource_type": "vm",
   "region": "koreacentral",
-  "timestamp": "2026-07-08T12:19:00Z",
-  "cpu_percent": 0.443,
-  "memory_percent": 45.04,
-  "disk_percent": 10.8,
+  "timestamp": "2026-07-07T10:19:00Z",
+  "cpu_percent": 0.525,
+  "memory_percent": 48.29,
+  "disk_percent": 10.7,
   "instance_type": "Standard_B2ats_v2",
   "vcpu": 2,
   "ram_gb": 1.0,
@@ -1018,40 +695,27 @@ USD 변환된 일별·서비스별 비용
 }
 ```
 
-비용 레코드 예시:
-
-```json
-{
-  "cloud": "azure",
-  "date": "2026-07-07",
-  "cost_usd": 0.119029,
-  "currency": "USD",
-  "service": "Storage",
-  "granularity": "DAILY"
-}
-```
-
-실제 CPU, 메모리, 비용 값과 timestamp는 실행 시점 및 Cost Management 집계 상태에 따라 달라진다.
+실제 CPU, 메모리 값과 timestamp는 실행 시점에 따라 달라진다.
 
 성공 기준:
 
 ```text
-1. RESOURCE METRICS가 JSON 형식으로 출력된다.
-2. CPU, Memory, Disk가 숫자 또는 정상적인 null 상태로 출력된다.
-3. instance_type, vcpu, ram_gb가 출력된다.
-4. COST RECORDS가 리스트 형태로 출력된다.
-5. date가 YYYY-MM-DD 형식이다.
-6. cost_usd가 숫자로 출력된다.
-7. currency가 USD이다.
-8. service가 Azure ServiceName 기준으로 출력된다.
-9. granularity가 DAILY이다.
+1. JSON 형식으로 출력된다.
+2. cloud가 azure이다.
+3. CPU가 숫자로 출력된다.
+4. Memory가 숫자로 출력된다.
+5. Disk가 숫자로 출력된다.
+6. instance_type이 출력된다.
+7. vcpu가 숫자로 출력된다.
+8. ram_gb가 숫자로 출력된다.
+9. cost_monthly는 현재 null이다.
 ```
 
 ---
 
-# 14. 단위 테스트
+# 13. 단위 테스트
 
-## 14.1 실행
+## 13.1 실행
 
 PowerShell:
 
@@ -1062,10 +726,10 @@ py -m unittest -v tests.test_azure_exporter
 현재 테스트 수:
 
 ```text
-8개
+4개
 ```
 
-자원 레코드 검증 항목:
+검증 항목:
 
 ```text
 1. 전체 공통 필드가 정상 전달되는가?
@@ -1074,28 +738,19 @@ py -m unittest -v tests.test_azure_exporter
 4. Azure 내부 필드 metric_name이 공통 레코드에서 제거되는가?
 ```
 
-비용 레코드 검증 항목:
-
-```text
-5. 1350 KRW가 1.0 USD로 변환되는가?
-6. 이미 USD인 값이 동일하게 유지되는가?
-7. 지원하지 않는 통화에 ValueError가 발생하는가?
-8. Azure 비용 원본 데이터가 공통 비용 레코드로 정상 변환되는가?
-```
-
 정상 결과:
 
 ```text
-Ran 8 tests
+Ran 4 tests
 
 OK
 ```
 
 ---
 
-# 15. stress-ng 부하 패턴 검증
+# 14. stress-ng 부하 패턴 검증
 
-## 15.1 목적
+## 14.1 목적
 
 수집기가 실제 CPU 사용 패턴을 구분하여 수집할 수 있는지 확인하기 위해 낮은 부하, 중간 부하, 높은 부하 패턴을 생성한다.
 
@@ -1109,7 +764,7 @@ OK
 
 ---
 
-## 15.2 SSH 접속
+## 14.2 SSH 접속
 
 VM 공인 IP 확인 후 로컬 PowerShell에서 접속한다.
 
@@ -1127,7 +782,7 @@ exit
 
 ---
 
-## 15.3 stress-ng 실행
+## 14.3 stress-ng 실행
 
 ### 저활용 패턴
 
@@ -1180,7 +835,7 @@ stress-ng --cpu 0 --cpu-load 90 --timeout 600s
 
 ---
 
-## 15.4 Azure Monitor 그래프 확인
+## 14.4 Azure Monitor 그래프 확인
 
 Azure Portal:
 
@@ -1220,7 +875,7 @@ Time Range: 최근 1시간 또는 최근 2시간
 
 ---
 
-## 15.5 stress 이후 Collector 재검증
+## 14.5 stress 이후 Collector 재검증
 
 SSH 세션 종료:
 
@@ -1249,9 +904,9 @@ stress-ng 테스트 이후에도 Collector가 정상 출력되면 검증 성공�
 
 ---
 
-# 16. 자주 발생하는 오류와 복구
+# 15. 자주 발생하는 오류와 복구
 
-## 16.1 환경변수 누락
+## 15.1 환경변수 누락
 
 증상:
 
@@ -1276,7 +931,7 @@ PowerShell 현재 경로 확인
 
 ---
 
-## 16.2 Azure 인증 실패
+## 15.2 Azure 인증 실패
 
 증상:
 
@@ -1301,7 +956,7 @@ Service Principal 정보와 .env 설정을 다시 확인한다.
 
 ---
 
-## 16.3 CPU Metrics API 시간 범위 오류
+## 15.3 CPU Metrics API 시간 범위 오류
 
 증상:
 
@@ -1328,7 +983,7 @@ timespan = f"{start_str}/{end_str}"
 
 ---
 
-## 16.4 cpu_percent가 null
+## 15.4 cpu_percent가 null
 
 원인 후보:
 
@@ -1349,7 +1004,7 @@ VM 상태 확인
 
 ---
 
-## 16.5 memory_percent가 null
+## 15.5 memory_percent가 null
 
 확인 항목:
 
@@ -1363,7 +1018,7 @@ Workspace ID
 
 ---
 
-## 16.6 disk_percent가 null
+## 15.6 disk_percent가 null
 
 확인 항목:
 
@@ -1376,7 +1031,7 @@ LAW Perf 데이터 유입 상태
 
 ---
 
-## 16.7 LAW Python Query 오류
+## 15.7 LAW Python Query 오류
 
 발생했던 오류:
 
@@ -1407,7 +1062,7 @@ columns = list(table.columns)
 
 ---
 
-## 16.8 SSH private key 권한 오류
+## 15.8 SSH private key 권한 오류
 
 증상 예:
 
@@ -1437,7 +1092,7 @@ private key 내용과 실제 경로는 Evidence와 GitHub에 노출하지 않는
 
 ---
 
-## 16.9 VM 사양 조회 실패
+## 15.9 VM 사양 조회 실패
 
 증상 후보:
 
@@ -1460,49 +1115,7 @@ Region
 
 ---
 
-## 16.10 Cost Management 권한 부족
-
-증상 예:
-
-```text
-401 Unauthorized
-403 Forbidden
-```
-
-확인 항목:
-
-```text
-finops-collector에 Cost Management 판독기 역할이 있는지 확인
-역할 범위가 Subscription인지 확인
-역할 할당 직후라면 반영 시간을 두고 다시 실행
-```
-
----
-
-## 16.11 지원하지 않는 통화
-
-증상 예:
-
-```text
-ValueError: 지원하지 않는 통화: ...
-```
-
-원인:
-
-```text
-EXCHANGE_RATE에 정의되지 않은 통화가 Cost Management 결과로 반환됨
-```
-
-복구:
-
-```text
-팀 환율 정책을 확인한 뒤 EXCHANGE_RATE를 명시적으로 확장한다.
-알 수 없는 통화에 임의 환율 1.0을 적용하지 않는다.
-```
-
----
-
-# 17. 검증 명령어 모음
+# 16. 검증 명령어 모음
 
 ## VM 실행 상태
 
@@ -1556,7 +1169,7 @@ py -m unittest -v tests.test_azure_exporter
 
 ---
 
-# 18. Evidence
+# 17. Evidence
 
 ## 기본 Azure Collector
 
@@ -1587,17 +1200,9 @@ evidence/day07-azure-unit-tests-ok.png
 evidence/day07-azure-stress-patterns.png
 ```
 
-## 비용 수집 및 변환 검증
-
-```text
-evidence/day09-azure-cost-api-ok.png
-evidence/day10-azure-cost-dry-run-ok.png
-evidence/day12-azure-cost-unit-tests-ok.png
-```
-
 ---
 
-# 19. 현재 완료 상태
+# 18. 현재 완료 상태
 
 ```text
 [완료] Service Principal 인증
@@ -1617,39 +1222,25 @@ evidence/day12-azure-cost-unit-tests-ok.png
 [완료] RAM 용량 수집
 [완료] CPU + Memory + Disk + VM Spec 통합
 [완료] 공통 레코드 전체 필드 출력
-[완료] 자원 메트릭 단위 테스트 4개 통과
+[완료] 단위 테스트 4개 통과
 [완료] stress-ng 10% 패턴 검증
 [완료] stress-ng 55% 패턴 검증
 [완료] stress-ng 90% 패턴 검증
 [완료] Azure Monitor CPU 패턴 그래프 확인
 [완료] stress 테스트 이후 Collector 재실행 검증
-[완료] Cost Management 판독기 권한 설정
-[완료] azure-mgmt-costmanagement 설치
-[완료] Cost Management API 최초 호출
-[완료] Resource Group 범위 비용 조회
-[완료] ServiceName 기준 비용 그룹화
-[완료] ResourceId 기준 비용 발생 리소스 확인
-[완료] collect_cost() 구현
-[완료] KRW → USD 변환 함수 구현
-[완료] 공통 비용 레코드 변환 함수 구현
-[완료] Resource Metrics + Cost Records 동시 dry-run
-[완료] 비용 테스트 4개 추가
-[완료] 전체 단위 테스트 8개 통과
 ```
 
 ---
 
-# 20. 다음 확장 작업
+# 19. 다음 확장 작업
 
 ```text
-1. 팀 공통 비용 스키마 합의 결과 반영
-2. to_common_cost_record() 최종 수정 및 관련 테스트 갱신
-3. 고정 환율을 대체할 환율 정책 결정
-4. 자원 메트릭과 비용 레코드의 연결 기준 설계
-5. 여러 VM 반복 수집
-6. 중앙 서버 API 전송
-7. PostgreSQL 적재
-8. 수집 주기 스케줄링
-9. 비용 수집 예외 처리 및 재시도 범위 확장
-10. 로그 기록 기능 추가
+1. Azure 비용 데이터 수집
+2. cost_monthly 필드 실제 값 연결
+3. 여러 VM 반복 수집
+4. 중앙 서버 API 전송
+5. PostgreSQL 적재
+6. 수집 주기 스케줄링
+7. 예외 처리 및 재시도 범위 확장
+8. 로그 기록 기능 추가
 ```

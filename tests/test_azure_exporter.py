@@ -1,6 +1,10 @@
 import unittest
 
-from collectors.azure_exporter import to_common_record
+from collectors.azure_exporter import (
+    to_common_cost_record,
+    to_common_record,
+    to_usd,
+)
 
 
 class TestAzureExporter(unittest.TestCase):
@@ -132,6 +136,60 @@ class TestAzureExporter(unittest.TestCase):
         record = to_common_record(raw)
 
         self.assertNotIn("metric_name", record)
+
+
+    def test_to_usd_from_krw(self):
+        """
+        KRW 비용이 고정 환율 기준으로 USD로 정상 변환되는지 확인한다.
+        """
+
+        result = to_usd(1350.0, "KRW")
+
+        self.assertEqual(result, 1.0)
+
+
+    def test_to_usd_from_usd(self):
+        """
+        이미 USD인 비용은 같은 값으로 유지되는지 확인한다.
+        """
+
+        result = to_usd(1.5, "USD")
+
+        self.assertEqual(result, 1.5)
+
+
+    def test_to_usd_unsupported_currency(self):
+        """
+        지원하지 않는 통화가 입력되면
+        잘못된 환율을 적용하지 않고 ValueError가 발생하는지 확인한다.
+        """
+
+        with self.assertRaises(ValueError):
+            to_usd(100.0, "EUR")
+
+
+    def test_to_common_cost_record(self):
+        """
+        Azure 비용 원본 데이터가 공통 비용 레코드로
+        정상 변환되는지 확인한다.
+        """
+
+        row = {
+            "Cost": 1350.0,
+            "UsageDate": 20260707,
+            "ServiceName": "Storage",
+            "ResourceId": "test-resource-id",
+            "Currency": "KRW",
+        }
+
+        record = to_common_cost_record(row)
+
+        self.assertEqual(record["cloud"], "azure")
+        self.assertEqual(record["date"], "2026-07-07")
+        self.assertEqual(record["cost_usd"], 1.0)
+        self.assertEqual(record["currency"], "USD")
+        self.assertEqual(record["service"], "Storage")
+        self.assertEqual(record["granularity"], "DAILY")
 
 
 if __name__ == "__main__":

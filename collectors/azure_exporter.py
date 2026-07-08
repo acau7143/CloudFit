@@ -20,6 +20,16 @@ from typing import Any, Dict, Optional
 from azure.core.exceptions import ClientAuthenticationError, HttpResponseError, ServiceRequestError
 from azure.identity import ClientSecretCredential
 from azure.mgmt.compute import ComputeManagementClient
+
+from azure.mgmt.costmanagement import CostManagementClient
+from azure.mgmt.costmanagement.models import (
+    QueryAggregation,
+    QueryDataset,
+    QueryDefinition,
+    QueryGrouping,
+    QueryTimePeriod,
+)
+
 from azure.mgmt.monitor import MonitorManagementClient
 from azure.monitor.query import LogsQueryClient, LogsQueryStatus
 from dotenv import load_dotenv
@@ -27,7 +37,14 @@ from dotenv import load_dotenv
 
 DEFAULT_INTERVAL = "PT5M"
 DEFAULT_LOOKBACK_MINUTES = 30
+DEFAULT_COST_LOOKBACK_DAYS = 7
 DEFAULT_REGION = "koreacentral"
+
+
+EXCHANGE_RATE = {
+    "KRW": 1350.0,
+    "USD": 1.0,
+}
 
 
 def load_config() -> Dict[str, str]:
@@ -348,6 +365,112 @@ def query_vm_spec(
     }
 
 
+def to_usd(amount: float, currency: str) -> float:
+    """
+    원본 비용을 USD 단위로 변환한다.
+    """
+
+    if currency not in EXCHANGE_RATE:
+        raise ValueError(f"지원하지 않는 통화: {currency}")
+
+    rate = EXCHANGE_RATE[currency]
+
+    return round(float(amount) / rate, 6)
+
+
+def to_common_cost_record(row: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Azure 비용 데이터를 공통 비용 레코드로 변환한다.
+    """
+
+    raw_cost = float(row["Cost"])
+    usage_date = str(row["UsageDate"])
+    currency = str(row["Currency"])
+
+    date_str = (
+        f"{usage_date[:4]}-"
+        f"{usage_date[4:6]}-"
+        f"{usage_date[6:8]}"
+    )
+
+    return {
+        "cloud": "azure",
+        "date": date_str,
+        "cost_usd": to_usd(raw_cost, currency),
+        "currency": "USD",
+        "service": row["ServiceName"],
+        "granularity": "DAILY",
+    }
+
+
+def collect_cost(
+    client: CostManagementClient,
+    subscription_id: str,
+    resource_group: str,
+    lookback_days: int = DEFAULT_COST_LOOKBACK_DAYS,
+) -> list[Dict[str, Any]]:
+    """
+    Resource Group 범위의 Azure 비용을 일별로 조회한다.
+
+    그룹 기준:
+    - ServiceName
+    - ResourceId
+    """
+
+    end_time = datetime.now(timezone.utc)
+    start_time = end_time - timedelta(days=lookback_days)
+
+    query = QueryDefinition(
+        type="ActualCost",
+        timeframe="Custom",
+        time_period=QueryTimePeriod(
+            from_property=start_time,
+            to=end_time,
+        ),
+        dataset=QueryDataset(
+            granularity="Daily",
+            aggregation={
+                "totalCost": QueryAggregation(
+                    name="Cost",
+                    function="Sum",
+                )
+            },
+            grouping=[
+                QueryGrouping(
+                    type="Dimension",
+                    name="ServiceName",
+                ),
+                QueryGrouping(
+                    type="Dimension",
+                    name="ResourceId",
+                ),
+            ],
+        ),
+    )
+
+    scope = (
+        f"/subscriptions/{subscription_id}"
+        f"/resourceGroups/{resource_group}"
+    )
+
+    result = client.query.usage(
+        scope=scope,
+        parameters=query,
+    )
+
+    columns = [
+        column.name
+        for column in (result.columns or [])
+    ]
+
+    rows = [
+        dict(zip(columns, row))
+        for row in (result.rows or [])
+    ]
+
+    return rows
+
+
 def collect_resource_metrics(resource_uri: Optional[str] = None) -> Dict[str, Any]:
     """
     Azure VM의 자원 메트릭과 인스턴스 사양을 수집한다.
@@ -445,7 +568,27 @@ def run_dry_run() -> None:
     raw = collect_resource_metrics()
     record = to_common_record(raw)
 
+    config = load_config()
+    credential = build_credential(config)
+
+    cost_client = CostManagementClient(credential)
+
+    cost_rows = collect_cost(
+        cost_client,
+        config["subscription_id"],
+        config["resource_group"],
+    )
+
+    cost_records = [
+        to_common_cost_record(row)
+        for row in cost_rows
+    ]
+
+    print("=== RESOURCE METRICS ===")
     print(json.dumps(record, indent=2, ensure_ascii=False))
+
+    print("\n=== COST RECORDS ===")
+    print(json.dumps(cost_records, indent=2, ensure_ascii=False))
 
     if record["cpu_percent"] is None:
         print(
