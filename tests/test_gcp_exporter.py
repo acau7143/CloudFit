@@ -2,6 +2,7 @@ import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "collectors"))
 
+from gcp_exporter import to_common_cost_record, estimate_daily_cost
 from gcp_exporter import to_common_record
 
 
@@ -33,3 +34,13 @@ def test_to_common_record_unknown_machine_type_returns_none_specs():
 def test_to_common_record_empty_records_returns_none_avg():
     record = to_common_record("instance-test", [], [], [], "e2-micro")
     assert record["cpu_avg"] is None
+
+def test_cost_record_cloud_is_gcp():
+    record = to_common_cost_record('2026-07-20', 0.2016, 'USD')
+    assert record['cloud'] == 'GCP'
+    assert record['date'] == '2026-07-20'
+    assert record['cost_usd'] == 0.2016
+
+def test_estimate_daily_cost_e2_micro():
+    cost = estimate_daily_cost('e2-micro', hours=24)
+    assert cost == round(0.0084 * 24, 6)

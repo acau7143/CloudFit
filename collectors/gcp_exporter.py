@@ -2,6 +2,7 @@ import sys
 from google.cloud import monitoring_v3
 from googleapiclient import discovery
 from datetime import datetime, timedelta, timezone
+from google.cloud import bigquery
 
 PROJECT_ID = "project-3f80ed2e-f0f6-4855-b15"
 ZONE = "asia-northeast3-a"
@@ -11,6 +12,12 @@ MACHINE_SPECS = {
     'e2-micro':  {'vcpu': 2, 'ram_gb': 1},
     'e2-small':  {'vcpu': 2, 'ram_gb': 2},
     'e2-medium': {'vcpu': 2, 'ram_gb': 4},
+}
+
+GCP_PRICING = {
+    'e2-micro':  0.0084,
+    'e2-small':  0.0168,
+    'e2-medium': 0.0336,
 }
 
 
@@ -132,6 +139,48 @@ def to_common_record(instance_id, cpu_records, memory_records, disk_records, mac
     }
 
 
+def estimate_daily_cost(machine_type: str, hours: int = 24) -> float:
+    hourly = GCP_PRICING.get(machine_type, 0.0)
+    return round(hourly * hours, 6)
+
+
+def to_common_cost_record(date, cost: float, currency: str) -> dict:
+    return {
+        "cloud": "GCP",
+        "date": str(date),
+        "cost_usd": float(cost),
+        "currency": "USD",
+        "service": "Compute Engine",
+        "granularity": "DAILY"
+    }
+
+
+def collect_cost(project_id: str, billing_account_id: str, machine_type: str = 'e2-micro') -> list[dict]:
+    """
+    BigQuery billing export에서 최근 7일 비용을 조회.
+    데이터가 없으면(아직 안 쌓였으면) 추정값으로 대체.
+    """
+    try:
+        client = bigquery.Client(project=project_id)
+        table_id = billing_account_id.replace("-", "_")  # 테이블명은 대시(-) 대신 언더바(_)
+        query = f"""
+            SELECT DATE(usage_start_time) AS date, SUM(cost) AS total_cost, currency
+            FROM `{project_id}.billing_export.gcp_billing_export_v1_{table_id}`
+            WHERE DATE(usage_start_time) BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) AND CURRENT_DATE()
+              AND service.description LIKE '%Compute%'
+            GROUP BY date, currency
+            ORDER BY date
+        """
+        rows = list(client.query(query).result())
+        if rows:
+            return [to_common_cost_record(r.date, r.total_cost, r.currency) for r in rows]
+    except Exception as e:
+        print(f"BigQuery 조회 실패 또는 데이터 없음: {e}")
+    # 여기 왔다는 건 = 쿼리 실패했거나, 성공했는데 결과가 0건(데이터 아직 안 쌓임)
+    today = datetime.utcnow().date().isoformat()
+    return [to_common_cost_record(today, estimate_daily_cost(machine_type), 'USD')]
+
+
 if __name__ == "__main__":
     dry_run = "--dry-run" in sys.argv
 
@@ -144,3 +193,9 @@ if __name__ == "__main__":
 
     record = to_common_record(instance_id, cpu_records, memory_records, disk_records, machine_type)
     print(record)
+
+    print("=== 비용 데이터 수집 테스트 ===")
+    BILLING_ACCOUNT_ID = "0175A5-88C06B-333607"
+    cost_records = collect_cost(PROJECT_ID, BILLING_ACCOUNT_ID, machine_type=machine_type)
+    for r in cost_records:
+        print(r)
