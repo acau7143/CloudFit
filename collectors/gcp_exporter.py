@@ -144,42 +144,41 @@ def estimate_daily_cost(machine_type: str, hours: int = 24) -> float:
     return round(hourly * hours, 6)
 
 
-def to_common_cost_record(date, cost: float, currency: str) -> dict:
+def to_common_cost_record(date, cost_usd: float, service: str = 'Compute Engine') -> dict:
     return {
         "cloud": "GCP",
         "date": str(date),
-        "cost_usd": float(cost),
+        "cost_usd": float(cost_usd),
         "currency": "USD",
-        "service": "Compute Engine",
+        "service": service,
         "granularity": "DAILY"
     }
 
 
 def collect_cost(project_id: str, billing_account_id: str, machine_type: str = 'e2-micro') -> list[dict]:
-    """
-    BigQuery billing export에서 최근 7일 비용을 조회.
-    데이터가 없으면(아직 안 쌓였으면) 추정값으로 대체.
-    """
     try:
         client = bigquery.Client(project=project_id)
-        table_id = billing_account_id.replace("-", "_")  # 테이블명은 대시(-) 대신 언더바(_)
+        table_id = billing_account_id.replace("-", "_")
         query = f"""
-            SELECT DATE(usage_start_time) AS date, SUM(cost) AS total_cost, currency
+            SELECT
+                DATE(usage_start_time) AS date,
+                service.description AS service,
+                SUM(cost / currency_conversion_rate) AS total_cost_usd
             FROM `{project_id}.billing_export.gcp_billing_export_v1_{table_id}`
             WHERE DATE(usage_start_time) BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) AND CURRENT_DATE()
-              AND service.description LIKE '%Compute%'
-            GROUP BY date, currency
-            ORDER BY date
+            GROUP BY date, service
+            ORDER BY date, service
         """
         rows = list(client.query(query).result())
         if rows:
-            return [to_common_cost_record(r.date, r.total_cost, r.currency) for r in rows]
+            return [
+                to_common_cost_record(r.date, r.total_cost_usd, r.service)
+                for r in rows
+            ]
     except Exception as e:
         print(f"BigQuery 조회 실패 또는 데이터 없음: {e}")
-    # 여기 왔다는 건 = 쿼리 실패했거나, 성공했는데 결과가 0건(데이터 아직 안 쌓임)
     today = datetime.utcnow().date().isoformat()
-    return [to_common_cost_record(today, estimate_daily_cost(machine_type), 'USD')]
-
+    return [to_common_cost_record(today, estimate_daily_cost(machine_type))]
 
 if __name__ == "__main__":
     dry_run = "--dry-run" in sys.argv
