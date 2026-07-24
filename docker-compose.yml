@@ -1,0 +1,32 @@
+services:
+  db:
+    image: postgres:15
+    container_name: finops_db
+    environment:
+      POSTGRES_USER: finops
+      POSTGRES_PASSWORD: finops123
+      POSTGRES_DB: finops_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finops"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build: ./server
+    container_name: finops_server
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://finops:finops123@db:5432/finops_db
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
