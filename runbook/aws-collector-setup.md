@@ -106,6 +106,18 @@ sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a status
 
 
 
+## 비용 수집 (collect_cost / to_common_cost_record)
+
+- 함수: `collect_cost(start_date=None, end_date=None)` — 기본 최근 7일 조회
+- Cost Explorer 호출 시 `GroupBy=[{"Type":"DIMENSION","Key":"SERVICE"}]`로 **서비스별** 조회
+  (decisions/0002: 특정 서비스 필터 없이 전 서비스 수집, 하루 총합 1행 아님)
+- 각 그룹을 `to_common_cost_record(date, amount, unit, service)`로 공통 형식 변환
+  → `{cloud:"AWS", date, cost_usd, currency:"USD", service, granularity:"DAILY"}`
+- `UnblendedCost` 단위가 이미 USD라 환율 변환 불필요 (Azure 하드코딩 환율 / GCP 환율계산과의 차이점)
+- 프리티어 계정은 대부분 서비스 비용이 `0 USD`로 나올 수 있음 (API 정상 동작, 실제 청구가 0)
+
+
+
 \## stress-ng 부하 테스트
 
 ```bash
@@ -128,7 +140,7 @@ stress-ng --cpu 4 --cpu-load 90 --timeout 300s   # 과부하
 
 ```bash
 
-python3 collectors/aws\_exporter.py
+python3 collectors/aws\_exporter.py --dry-run
 
 python3 -m pytest tests/ -v
 
