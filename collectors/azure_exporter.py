@@ -25,6 +25,7 @@ from azure.mgmt.costmanagement.models import (
 from azure.mgmt.monitor import MonitorManagementClient
 from azure.monitor.query import LogsQueryClient, LogsQueryStatus
 from dotenv import load_dotenv
+import requests
 
 DEFAULT_INTERVAL = "PT5M"
 DEFAULT_LOOKBACK_MINUTES = 30
@@ -35,6 +36,37 @@ EXCHANGE_RATE = {
     "KRW": 1350.0,
     "USD": 1.0,
 }
+
+
+SERVER_URL = "http://localhost:8000"  # 나중에 .env로 빼기
+
+
+def send_resource_to_server(record: Dict[str, Any]) -> bool:
+    """수집한 자원 메트릭을 중앙 서버 API로 전송"""
+    try:
+        response = requests.post(f"{SERVER_URL}/resources", json=record, timeout=5)
+        if response.status_code == 201:
+            print(f"[OK] 자원 데이터 저장 성공: {record['instance_id']}")
+            return True
+        else:
+            print(f"[FAIL] 서버 응답 오류: {response.status_code} {response.text}", file=sys.stderr)
+            return False
+    except requests.exceptions.ConnectionError:
+        print(f"[FAIL] 서버 연결 실패: {SERVER_URL} 접속 불가", file=sys.stderr)
+        return False
+    except Exception as error:
+        print(f"[FAIL] 예외 발생: {error}", file=sys.stderr)
+        return False
+
+
+def send_cost_to_server(record: Dict[str, Any]) -> bool:
+    """수집한 비용 데이터를 중앙 서버 API로 전송"""
+    try:
+        response = requests.post(f"{SERVER_URL}/costs", json=record, timeout=5)
+        return response.status_code == 201
+    except Exception as error:
+        print(f"[FAIL] 비용 데이터 전송 실패: {error}", file=sys.stderr)
+        return False
 
 
 def load_config() -> Dict[str, str]:
@@ -312,18 +344,37 @@ def run_dry_run() -> None:
         print("\n[주의] 디스크 값이 null입니다. 루트 파일시스템(/)의 Perf 데이터가 있는지 확인하세요.", file=sys.stderr)
 
 
+def run_send() -> None:
+    """수집한 자원 메트릭과 비용 데이터를 dry-run 없이 실제 서버로 전송"""
+    raw = collect_resource_metrics()
+    record = to_common_record(raw)
+
+    print("=== 자원 데이터 전송 시도 ===")
+    print(json.dumps(record, indent=2, ensure_ascii=False))
+    send_resource_to_server(record)
+
+    config = load_config()
+    credential = build_credential(config)
+    cost_client = CostManagementClient(credential)
+    cost_rows = collect_cost(cost_client, config["subscription_id"], config["resource_group"])
+    cost_records = [to_common_cost_record(row) for row in cost_rows]
+
+    print("\n=== 비용 데이터 전송 시도 ===")
+    for cost_record in cost_records:
+        print(json.dumps(cost_record, indent=2, ensure_ascii=False))
+        send_cost_to_server(cost_record)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Azure VM resource metric collector")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    if not args.dry_run:
-        print("현재는 --dry-run 모드만 지원합니다.")
-        print("실행 예: python collectors\\azure_exporter.py --dry-run")
-        return
-
     try:
-        run_dry_run()
+        if args.dry_run:
+            run_dry_run()
+        else:
+            run_send()
     except ClientAuthenticationError as error:
         print("[ERROR] Azure 인증 실패", file=sys.stderr)
         print("확인할 것: AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET", file=sys.stderr)
