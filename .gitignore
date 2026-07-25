@@ -1,5 +1,21 @@
+# 인증/비밀 정보 (절대 올리면 안 됨)
+*.pem
+*.csv
 .env
+credentials
+*.key
+
+# 파이썬 관련
 __pycache__/
 *.pyc
-.venv/
 venv/
+.venv/
+
+# OS/에디터 파일
+.DS_Store
+Thumbs.db
+.vscode/
+
+# 클로드 프로젝트 전용 (개인 지침/대화 백업 — 팀 저장소엔 올리지 않음)
+CLAUDE.md
+chat-archive/
