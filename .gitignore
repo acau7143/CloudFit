@@ -1,3 +1,7 @@
+<<<<<<< HEAD
+__pycache__/
+*.pyc
+=======
 # 인증/비밀 정보 (절대 올리면 안 됨)
 *.pem
 *.csv
@@ -19,3 +23,4 @@ Thumbs.db
 # 클로드 프로젝트 전용 (개인 지침/대화 백업 — 팀 저장소엔 올리지 않음)
 CLAUDE.md
 chat-archive/
+>>>>>>> origin/main
