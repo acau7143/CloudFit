@@ -38,13 +38,18 @@ EXCHANGE_RATE = {
 }
 
 
-SERVER_URL = "http://localhost:8000"  # 나중에 .env로 빼기
+SERVER_URL = "https://rippling-mannish-dyslexic.ngrok-free.dev"  # 나중에 .env로 빼기
 
 
 def send_resource_to_server(record: Dict[str, Any]) -> bool:
     """수집한 자원 메트릭을 중앙 서버 API로 전송"""
     try:
-        response = requests.post(f"{SERVER_URL}/resources", json=record, timeout=5)
+        response = requests.post(
+            f"{SERVER_URL}/resources",
+            json=record,
+            timeout=5,
+            headers={"ngrok-skip-browser-warning": "true"},
+        )
         if response.status_code == 201:
             print(f"[OK] 자원 데이터 저장 성공: {record['instance_id']}")
             return True
@@ -62,8 +67,18 @@ def send_resource_to_server(record: Dict[str, Any]) -> bool:
 def send_cost_to_server(record: Dict[str, Any]) -> bool:
     """수집한 비용 데이터를 중앙 서버 API로 전송"""
     try:
-        response = requests.post(f"{SERVER_URL}/costs", json=record, timeout=5)
-        return response.status_code == 201
+        response = requests.post(
+            f"{SERVER_URL}/costs",
+            json=record,
+            timeout=5,
+            headers={"ngrok-skip-browser-warning": "true"},
+        )
+        if response.status_code == 201:
+            print(f"[OK] 비용 데이터 저장 성공: {record['date']} / {record['service']}")
+            return True
+        else:
+            print(f"[FAIL] 서버 응답 오류: {response.status_code} {response.text}", file=sys.stderr)
+            return False
     except Exception as error:
         print(f"[FAIL] 비용 데이터 전송 실패: {error}", file=sys.stderr)
         return False
