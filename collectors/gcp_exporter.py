@@ -1,4 +1,5 @@
 import sys
+import requests
 from google.cloud import monitoring_v3
 from googleapiclient import discovery
 from datetime import datetime, timedelta, timezone
@@ -180,6 +181,49 @@ def collect_cost(project_id: str, billing_account_id: str, machine_type: str = '
     today = datetime.utcnow().date().isoformat()
     return [to_common_cost_record(today, estimate_daily_cost(machine_type))]
 
+
+SERVER_URL = "https://rippling-mannish-dyslexic.ngrok-free.dev"
+
+def send_resource_to_server(record: dict) -> bool:
+    try:
+        response = requests.post(
+            f"{SERVER_URL}/resources",
+            json=record,
+            headers={"ngrok-skip-browser-warning": "true"},
+            timeout=5
+        )
+        if response.status_code == 201:
+            print(f"[OK] 자원 데이터 저장 성공: {record['instance_id']}")
+            return True
+        else:
+            print(f"[FAIL] 서버 응답 오류: {response.status_code} {response.text}")
+            return False
+    except requests.exceptions.ConnectionError:
+        print(f"[FAIL] 서버 연결 실패: {SERVER_URL} 접속 불가")
+        return False
+    except Exception as e:
+        print(f"[FAIL] 예외 발생: {e}")
+        return False
+
+
+def send_cost_to_server(record: dict) -> bool:
+    try:
+        response = requests.post(
+            f"{SERVER_URL}/costs",
+            json=record,
+            headers={"ngrok-skip-browser-warning": "true"},
+            timeout=5
+        )
+        if response.status_code == 201:
+            print(f"[OK] 비용 데이터 저장 성공: {record['date']}")
+            return True
+        else:
+            print(f"[FAIL] 서버 응답 오류: {response.status_code} {response.text}")
+            return False
+    except Exception as e:
+        print(f"[FAIL] 비용 데이터 전송 실패: {e}")
+        return False
+
 if __name__ == "__main__":
     dry_run = "--dry-run" in sys.argv
 
@@ -189,12 +233,17 @@ if __name__ == "__main__":
     machine_type = get_instance_spec(PROJECT_ID, ZONE, INSTANCE_NAME)
 
     instance_id = cpu_records[0]["instance_id"] if cpu_records else "unknown"
-
     record = to_common_record(instance_id, cpu_records, memory_records, disk_records, machine_type)
-    print(record)
 
-    print("=== 비용 데이터 수집 테스트 ===")
     BILLING_ACCOUNT_ID = "0175A5-88C06B-333607"
     cost_records = collect_cost(PROJECT_ID, BILLING_ACCOUNT_ID, machine_type=machine_type)
-    for r in cost_records:
-        print(r)
+
+    if dry_run:
+        print(record)
+        print("=== 비용 데이터 수집 테스트 ===")
+        for r in cost_records:
+            print(r)
+    else:
+        send_resource_to_server(record)
+        for r in cost_records:
+            send_cost_to_server(r)
