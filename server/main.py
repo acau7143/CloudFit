@@ -43,6 +43,8 @@ async def health():
 
 @app.post("/resources", status_code=201)
 async def save_resource(metric: ResourceMetricIn, db: AsyncSession = Depends(get_db)):
+    # [5주차] 중복 방지: (cloud, instance_id, timestamp)가 같으면 덮어쓴다.
+    #   재전송해도 행이 두 배로 늘지 않음. UNIQUE 제약(uq_resource_cloud_instance_ts)과 짝.
     sql = text("""
         INSERT INTO resource_metrics
             (cloud, instance_id, timestamp, cpu_avg, memory_avg, disk_avg,
@@ -50,6 +52,14 @@ async def save_resource(metric: ResourceMetricIn, db: AsyncSession = Depends(get
         VALUES
             (:cloud, :instance_id, :timestamp, :cpu_avg, :memory_avg, :disk_avg,
              :instance_type, :vcpu, :ram_gb)
+        ON CONFLICT (cloud, instance_id, timestamp)
+        DO UPDATE SET
+            cpu_avg = EXCLUDED.cpu_avg,
+            memory_avg = EXCLUDED.memory_avg,
+            disk_avg = EXCLUDED.disk_avg,
+            instance_type = EXCLUDED.instance_type,
+            vcpu = EXCLUDED.vcpu,
+            ram_gb = EXCLUDED.ram_gb
     """)
     data = metric.model_dump()
     # asyncpg는 문자열이 아니라 datetime 객체를 요구 → ISO 문자열을 변환
@@ -76,9 +86,17 @@ async def get_resources(cloud: Optional[str] = None, db: AsyncSession = Depends(
 
 @app.post("/costs", status_code=201)
 async def save_cost(record: CostRecordIn, db: AsyncSession = Depends(get_db)):
+    # [5주차] 중복 방지: (cloud, date, service)가 같으면 덮어쓴다.
+    #   수집기가 최근 7일을 매번 다시 긁어오므로, 재전송 시 같은 날짜/서비스 행이
+    #   쌓이지 않고 최신 값으로 갱신됨. UNIQUE 제약(uq_cost_cloud_date_service)과 짝.
     sql = text("""
         INSERT INTO cost_records (cloud, date, cost_usd, currency, service, granularity)
         VALUES (:cloud, :date, :cost_usd, :currency, :service, :granularity)
+        ON CONFLICT (cloud, date, service)
+        DO UPDATE SET
+            cost_usd = EXCLUDED.cost_usd,
+            currency = EXCLUDED.currency,
+            granularity = EXCLUDED.granularity
     """)
     data = record.model_dump()
     # DATE 컬럼도 문자열이 아니라 date 객체를 요구 → 변환
