@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 import requests
 
 DEFAULT_INTERVAL = "PT5M"
-DEFAULT_LOOKBACK_MINUTES = 30
+DEFAULT_LOOKBACK_MINUTES = 60
 DEFAULT_COST_LOOKBACK_DAYS = 7
 DEFAULT_REGION = "koreacentral"
 
@@ -38,7 +38,8 @@ EXCHANGE_RATE = {
 }
 
 
-SERVER_URL = "https://rippling-mannish-dyslexic.ngrok-free.dev"  # 나중에 .env로 빼기
+load_dotenv()
+SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
 
 
 def send_resource_to_server(record: Dict[str, Any]) -> bool:
@@ -48,7 +49,6 @@ def send_resource_to_server(record: Dict[str, Any]) -> bool:
             f"{SERVER_URL}/resources",
             json=record,
             timeout=5,
-            headers={"ngrok-skip-browser-warning": "true"},
         )
         if response.status_code == 201:
             print(f"[OK] 자원 데이터 저장 성공: {record['instance_id']}")
@@ -71,7 +71,6 @@ def send_cost_to_server(record: Dict[str, Any]) -> bool:
             f"{SERVER_URL}/costs",
             json=record,
             timeout=5,
-            headers={"ngrok-skip-browser-warning": "true"},
         )
         if response.status_code == 201:
             print(f"[OK] 비용 데이터 저장 성공: {record['date']} / {record['service']}")
@@ -85,7 +84,6 @@ def send_cost_to_server(record: Dict[str, Any]) -> bool:
 
 
 def load_config() -> Dict[str, str]:
-    load_dotenv()
     config = {
         "tenant_id": os.getenv("AZURE_TENANT_ID"),
         "client_id": os.getenv("AZURE_CLIENT_ID"),
