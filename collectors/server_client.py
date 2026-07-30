@@ -15,7 +15,7 @@ except ImportError:
     pass
 
 SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
-TIMEOUT = 10  # 초
+TIMEOUT = 30  # 초
 
 
 def check_health():
