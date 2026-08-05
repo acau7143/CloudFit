@@ -27,6 +27,19 @@ services:
     depends_on:
       db:
         condition: service_healthy
+  grafana:
+    image: grafana/grafana:latest
+    container_name: finops_grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - grafana_data:/var/lib/grafana
 
 volumes:
-  postgres_data:
+    postgres_data:
+    grafana_data:   
