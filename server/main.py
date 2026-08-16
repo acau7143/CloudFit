@@ -119,3 +119,29 @@ async def get_costs(cloud: Optional[str] = None, db: AsyncSession = Depends(get_
             text("SELECT * FROM cost_records ORDER BY date DESC LIMIT 100")
         )
     return [dict(row._mapping) for row in result.fetchall()]
+
+
+@app.get("/anomalies")
+async def get_anomalies(
+    cloud: Optional[str] = None,
+    only_anomaly: bool = True,
+    db: AsyncSession = Depends(get_db)
+):
+    """이상탐지 결과 조회 (기본: 이상 건만, cloud로 추가 필터 가능)"""
+    conditions = []
+    params = {}
+    if cloud:
+        conditions.append("cloud = :cloud")
+        params["cloud"] = cloud
+    if only_anomaly:
+        conditions.append("anomaly = TRUE")
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    sql = text(f"""
+        SELECT cloud, instance_id, timestamp, cpu_avg, anomaly, score
+        FROM anomaly_results
+        {where}
+        ORDER BY timestamp DESC
+        LIMIT 100
+    """)
+    result = await db.execute(sql, params)
+    return [dict(row._mapping) for row in result.fetchall()]

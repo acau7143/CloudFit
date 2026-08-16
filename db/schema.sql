@@ -38,3 +38,21 @@ CREATE INDEX IF NOT EXISTS idx_cost_records_cloud_date
     ON cost_records (cloud, date);
 CREATE INDEX IF NOT EXISTS idx_cost_records_cloud_date_service
     ON cost_records (cloud, date, service);
+
+-- anomaly_results: ML(Isolation Forest) 이상탐지 결과 저장
+CREATE TABLE IF NOT EXISTS anomaly_results (
+    id           SERIAL PRIMARY KEY,
+    cloud        VARCHAR(10)  NOT NULL,          -- 'AWS' / 'Azure' / 'GCP'
+    instance_id  VARCHAR(100),
+    timestamp    TIMESTAMPTZ  NOT NULL,
+    cpu_avg      FLOAT,
+    anomaly      BOOLEAN      NOT NULL,           -- TRUE: 이상, FALSE: 정상
+    score        FLOAT,                           -- 낮을수록 이상 (Isolation Forest score)
+    detected_at  TIMESTAMPTZ  DEFAULT now(),
+    -- [7주차] 같은 (클라우드, 인스턴스, 시각) 중복 탐지 방지 → 10분 크론 겹침 구간 대비
+    CONSTRAINT uq_anomaly_cloud_instance_ts UNIQUE (cloud, instance_id, timestamp)
+);
+CREATE INDEX IF NOT EXISTS idx_anomaly_results_cloud_time
+    ON anomaly_results (cloud, timestamp);
+CREATE INDEX IF NOT EXISTS idx_anomaly_results_anomaly
+    ON anomaly_results (anomaly, timestamp);

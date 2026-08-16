@@ -226,11 +226,16 @@ if __name__ == "__main__":
         default="i-05f7cdc5c5183e2ae",
         help="자원 메트릭을 조회할 EC2 인스턴스 ID",
     )
+    parser.add_argument(
+        "--costs",
+        action="store_true",
+        help="비용(Cost Explorer) 수집도 함께 실행한다. 지정하지 않으면 자원 메트릭만 수집한다.",
+    )
     args = parser.parse_args()
 
     # 수집은 공통 (dry-run이든 실전송이든 한 번만)
     record = collect_and_normalize(args.instance_id)
-    cost_records = collect_cost()
+    cost_records = collect_cost() if args.costs else []
 
     if args.dry_run:
         print("=== RESOURCE METRIC ===")
@@ -239,7 +244,7 @@ if __name__ == "__main__":
         print("\n=== COST RECORDS ===")
         print(json.dumps(cost_records, indent=2, ensure_ascii=False))
 
-        if not cost_records:
+        if args.costs and not cost_records:
             print("\n[주의] 비용 레코드가 비어 있습니다. 프리티어라 $0이거나 데이터 지연일 수 있습니다.")
 
         # 전송 전 사전 점검: cpu_avg가 null이면 실전송 때 자원이 막힘
