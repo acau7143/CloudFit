@@ -267,7 +267,16 @@ def collect_cost(
     subscription_id: str,
     resource_group: str,
     lookback_days: int = DEFAULT_COST_LOOKBACK_DAYS,
+    max_retries: int = 3,
 ) -> list[Dict[str, Any]]:
+    """비용 데이터를 조회한다.
+
+    Azure Cost Management API는 스코프당 분당 4회 호출 제한이 있다 (INC-001).
+    429가 뜨면 Retry-After 헤더를 기준으로 대기 후 재시도한다.
+    이 재시도는 "완화책"이며, 근본 해결은 호출 자체를 줄이는 것(자원/비용 수집
+    인터벌 분리 등)이다. 429 외의 에러(인증 실패, 네트워크 오류 등)는
+    기다려도 해결되지 않으므로 재시도하지 않고 즉시 올린다.
+    """
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(days=lookback_days)
 
@@ -285,10 +294,26 @@ def collect_cost(
         ),
     )
     scope = f"/subscriptions/{subscription_id}/resourceGroups/{resource_group}"
-    result = client.query.usage(scope=scope, parameters=query)
 
-    columns = [c.name for c in (result.columns or [])]
-    return [dict(zip(columns, row)) for row in (result.rows or [])]
+    for attempt in range(max_retries + 1):
+        try:
+            result = client.query.usage(scope=scope, parameters=query)
+            columns = [c.name for c in (result.columns or [])]
+            return [dict(zip(columns, row)) for row in (result.rows or [])]
+        except HttpResponseError as error:
+            if error.status_code == 429 and attempt < max_retries:
+                retry_after = int(error.response.headers.get("Retry-After", 30))
+                print(
+                    f"[WAIT] 429 에러 - {retry_after}초 후 재시도 "
+                    f"({attempt + 1}/{max_retries})",
+                    file=sys.stderr,
+                )
+                time.sleep(retry_after)
+                continue
+            raise
+
+    # max_retries를 다 소진해도 여기 도달하지 않지만, 정적 분석/타입체커 대비 명시적 처리
+    raise RuntimeError("Cost Management 조회: 재시도 횟수를 초과했습니다.")
 
 
 def collect_resource_metrics(resource_uri: Optional[str] = None) -> Dict[str, Any]:
