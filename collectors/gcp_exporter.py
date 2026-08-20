@@ -1,6 +1,10 @@
+import os
 import sys
+import time
 import requests
+from dotenv import load_dotenv
 from google.cloud import monitoring_v3
+from google.api_core.exceptions import ResourceExhausted
 from googleapiclient import discovery
 from datetime import datetime, timedelta, timezone
 from google.cloud import bigquery
@@ -22,11 +26,30 @@ GCP_PRICING = {
 }
 
 
+def _list_time_series_with_retry(client, request, max_retries=3):
+    """Cloud Monitoring API 호출 + 할당량 초과(ResourceExhausted) 시 재시도.
+    list_time_series는 호출 시점이 아니라 순회(iterate)할 때 실제 통신이 일어나므로,
+    try 블록 안에서 list()로 끝까지 소비해야 재시도가 제대로 동작한다."""
+    for attempt in range(max_retries + 1):
+        try:
+            return list(client.list_time_series(request=request))
+        except ResourceExhausted as error:
+            if attempt < max_retries:
+                wait = 30 * (attempt + 1)  # 30초, 60초, 90초
+                print(f"[WAIT] 할당량 초과 - {wait}초 후 재시도 ({attempt + 1}/{max_retries})")
+                time.sleep(wait)
+                continue
+            print(f"[FAIL] 재시도 {max_retries}번 다 실패: {error}")
+            raise
+
+
 def collect_cpu(project_id):
     client = monitoring_v3.MetricServiceClient()
     project_name = f"projects/{project_id}"
     now = datetime.now(timezone.utc)
-    results = client.list_time_series(
+
+    results = _list_time_series_with_retry(
+        client,
         request={
             "name": project_name,
             "filter": 'metric.type="compute.googleapis.com/instance/cpu/utilization"',
@@ -37,6 +60,7 @@ def collect_cpu(project_id):
             "view": monitoring_v3.ListTimeSeriesRequest.TimeSeriesView.FULL,
         }
     )
+
     records = []
     for result in results:
         instance_id = result.resource.labels.get("instance_id", "unknown")
@@ -54,7 +78,9 @@ def collect_memory(project_id):
     client = monitoring_v3.MetricServiceClient()
     project_name = f"projects/{project_id}"
     now = datetime.now(timezone.utc)
-    results = client.list_time_series(
+
+    results = _list_time_series_with_retry(
+        client,
         request={
             "name": project_name,
             "filter": 'metric.type="agent.googleapis.com/memory/percent_used" AND metric.label.state="used"',
@@ -65,6 +91,7 @@ def collect_memory(project_id):
             "view": monitoring_v3.ListTimeSeriesRequest.TimeSeriesView.FULL,
         }
     )
+
     records = []
     for result in results:
         instance_id = result.resource.labels.get("instance_id", "unknown")
@@ -82,7 +109,9 @@ def collect_disk(project_id):
     client = monitoring_v3.MetricServiceClient()
     project_name = f"projects/{project_id}"
     now = datetime.now(timezone.utc)
-    results = client.list_time_series(
+
+    results = _list_time_series_with_retry(
+        client,
         request={
             "name": project_name,
             "filter": 'metric.type="agent.googleapis.com/disk/percent_used" AND metric.label.device="/dev/sda1" AND metric.label.state="used"',
@@ -93,6 +122,7 @@ def collect_disk(project_id):
             "view": monitoring_v3.ListTimeSeriesRequest.TimeSeriesView.FULL,
         }
     )
+
     records = []
     for result in results:
         instance_id = result.resource.labels.get("instance_id", "unknown")
@@ -178,18 +208,20 @@ def collect_cost(project_id: str, billing_account_id: str, machine_type: str = '
             ]
     except Exception as e:
         print(f"BigQuery 조회 실패 또는 데이터 없음: {e}")
+
     today = datetime.utcnow().date().isoformat()
     return [to_common_cost_record(today, estimate_daily_cost(machine_type))]
 
 
-SERVER_URL = "https://rippling-mannish-dyslexic.ngrok-free.dev"
+load_dotenv()
+SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
+
 
 def send_resource_to_server(record: dict) -> bool:
     try:
         response = requests.post(
             f"{SERVER_URL}/resources",
             json=record,
-            headers={"ngrok-skip-browser-warning": "true"},
             timeout=5
         )
         if response.status_code == 201:
@@ -223,6 +255,7 @@ def send_cost_to_server(record: dict) -> bool:
     except Exception as e:
         print(f"[FAIL] 비용 데이터 전송 실패: {e}")
         return False
+
 
 if __name__ == "__main__":
     dry_run = "--dry-run" in sys.argv
