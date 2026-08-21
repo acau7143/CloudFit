@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS resource_metrics (
     vcpu INT,
     ram_gb FLOAT,
     created_at TIMESTAMPTZ DEFAULT now(),
+    source VARCHAR(20) DEFAULT 'real',   -- [8주차] 'real'(실데이터) / 'synthetic'(stress-ng 생성)
+    pattern VARCHAR(20),                 -- [8주차] synthetic 데이터의 부하 패턴 종류 (예: cpu_spike, idle 등) - real이면 NULL
     -- [5주차] 같은 (클라우드, 인스턴스, 시각) 재전송 시 중복 방지
     CONSTRAINT uq_resource_cloud_instance_ts UNIQUE (cloud, instance_id, timestamp)
 );
@@ -18,7 +20,8 @@ CREATE INDEX IF NOT EXISTS idx_resource_metrics_cloud_time
     ON resource_metrics (cloud, timestamp);
 CREATE INDEX IF NOT EXISTS idx_resource_metrics_instance
     ON resource_metrics (instance_id, timestamp);
-
+CREATE INDEX IF NOT EXISTS idx_resource_metrics_source
+    ON resource_metrics (source);
 -- cost_records: 하루 1회, 서비스별로 여러 행 (decisions/0002 참고)
 CREATE TABLE IF NOT EXISTS cost_records (
     id SERIAL PRIMARY KEY,
@@ -38,7 +41,6 @@ CREATE INDEX IF NOT EXISTS idx_cost_records_cloud_date
     ON cost_records (cloud, date);
 CREATE INDEX IF NOT EXISTS idx_cost_records_cloud_date_service
     ON cost_records (cloud, date, service);
-
 -- anomaly_results: ML(Isolation Forest) 이상탐지 결과 저장
 CREATE TABLE IF NOT EXISTS anomaly_results (
     id           SERIAL PRIMARY KEY,
