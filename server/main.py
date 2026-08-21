@@ -145,3 +145,28 @@ async def get_anomalies(
     """)
     result = await db.execute(sql, params)
     return [dict(row._mapping) for row in result.fetchall()]
+@app.get("/recommendations")
+async def get_recommendations(
+    cloud: Optional[str] = None,
+    recommendation: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """비용 최적화 추천 조회 (cloud, recommendation으로 필터 가능)"""
+    conditions = []
+    params = {}
+    if cloud:
+        conditions.append("cloud = :cloud")
+        params["cloud"] = cloud
+    if recommendation:
+        conditions.append("recommendation = :recommendation")
+        params["recommendation"] = recommendation
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    sql = text(f"""
+        SELECT cloud, instance_id, avg_cpu_7d, total_cost_7d, recommendation, reason, generated_at
+        FROM recommendations
+        {where}
+        ORDER BY generated_at DESC
+        LIMIT 100
+    """)
+    result = await db.execute(sql, params)
+    return [dict(row._mapping) for row in result.fetchall()]

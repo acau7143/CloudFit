@@ -58,3 +58,19 @@ CREATE INDEX IF NOT EXISTS idx_anomaly_results_cloud_time
     ON anomaly_results (cloud, timestamp);
 CREATE INDEX IF NOT EXISTS idx_anomaly_results_anomaly
     ON anomaly_results (anomaly, timestamp);
+
+-- recommendations: 비용 최적화 추천 (저활용 인스턴스 다운사이징 등)
+CREATE TABLE IF NOT EXISTS recommendations (
+    id             SERIAL PRIMARY KEY,
+    cloud          VARCHAR(10)  NOT NULL,          -- 'AWS' / 'Azure' / 'GCP'
+    instance_id    VARCHAR(100) NOT NULL,
+    avg_cpu_7d     FLOAT,
+    total_cost_7d  FLOAT,
+    recommendation VARCHAR(50),                    -- 'downsize' / 'terminate' / 'keep'
+    reason         TEXT,
+    generated_at   TIMESTAMPTZ DEFAULT now(),
+    -- [8주차] 실행할 때마다 새 행으로 쌓임 (이력 보존) - 같은 시각 재실행 시 중복만 방지
+    CONSTRAINT uq_reco_cloud_instance UNIQUE (cloud, instance_id, generated_at)
+);
+CREATE INDEX IF NOT EXISTS idx_recommendations_cloud_time
+    ON recommendations (cloud, generated_at);
