@@ -14,6 +14,7 @@ async def fetch_training_data():
                COALESCE(disk_avg, 0) AS disk_avg, timestamp
         FROM resource_metrics
         WHERE cpu_avg IS NOT NULL
+          AND source = 'real'
         ORDER BY timestamp
     """)
     await conn.close()
