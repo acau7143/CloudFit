@@ -7,6 +7,7 @@ from sklearn.preprocessing import StandardScaler
 
 DATABASE_URL = "postgresql://finops:finops123@localhost:5432/finops_db"
 
+
 async def fetch_training_data():
     conn = await asyncpg.connect(DATABASE_URL)
     rows = await conn.fetch("""
@@ -20,6 +21,7 @@ async def fetch_training_data():
     await conn.close()
     return pd.DataFrame([dict(r) for r in rows])
 
+
 def train_model_for_cloud(df_cloud, cloud):
     features = ['cpu_avg', 'memory_avg', 'disk_avg']
     X = df_cloud[features].fillna(0)
@@ -27,8 +29,19 @@ def train_model_for_cloud(df_cloud, cloud):
     X_scaled = scaler.fit_transform(X)
     model = IsolationForest(contamination=0.05, random_state=42, n_estimators=100)
     model.fit(X_scaled)
-    print(f"[OK] {cloud} 모델 학습 완료 - 학습 데이터: {len(df_cloud)}건")
-    return {'model': model, 'scaler': scaler}
+
+    cpu_mean = float(df_cloud['cpu_avg'].mean())
+    cpu_std = float(df_cloud['cpu_avg'].std())
+
+    print(f"[OK] {cloud} 모델 학습 완료 - 학습 데이터: {len(df_cloud)}건 "
+          f"(cpu_avg 평균={cpu_mean:.2f}, 표준편차={cpu_std:.2f})")
+    return {
+        'model': model,
+        'scaler': scaler,
+        'cpu_mean': cpu_mean,
+        'cpu_std': cpu_std,
+    }
+
 
 def train_all(df):
     saved = {}
@@ -41,6 +54,7 @@ def train_all(df):
         pickle.dump(saved, f)
     print(f"[OK] 전체 저장 완료 - 클라우드: {list(saved.keys())}")
     return saved
+
 
 if __name__ == "__main__":
     df = asyncio.run(fetch_training_data())

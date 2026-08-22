@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS anomaly_results (
     instance_id  VARCHAR(100),
     timestamp    TIMESTAMPTZ  NOT NULL,
     cpu_avg      FLOAT,
+    memory_avg   FLOAT,                           -- [8주차] 어떤 지표 때문에 이상 판정됐는지 확인용
+    disk_avg     FLOAT,                            -- [8주차] 어떤 지표 때문에 이상 판정됐는지 확인용
     anomaly      BOOLEAN      NOT NULL,           -- TRUE: 이상, FALSE: 정상
     score        FLOAT,                           -- 낮을수록 이상 (Isolation Forest score)
     detected_at  TIMESTAMPTZ  DEFAULT now(),
