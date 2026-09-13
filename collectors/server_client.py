@@ -33,3 +33,8 @@ def post_resource(payload):
 def post_cost(payload):
     """비용 레코드 1건 전송. Response 객체를 그대로 반환한다."""
     return requests.post(f"{SERVER_URL}/costs", json=payload, timeout=TIMEOUT)
+
+
+def post_unused_resource(payload):
+    """미사용 리소스 1건 전송. Response 객체를 그대로 반환한다."""
+    return requests.post(f"{SERVER_URL}/unused-resources", json=payload, timeout=TIMEOUT)

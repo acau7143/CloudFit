@@ -76,3 +76,32 @@ CREATE TABLE IF NOT EXISTS recommendations (
 );
 CREATE INDEX IF NOT EXISTS idx_recommendations_cloud_time
     ON recommendations (cloud, generated_at);
+
+-- [9주차] 미사용 리소스 탐지
+CREATE TABLE IF NOT EXISTS unused_resources (
+    id            SERIAL PRIMARY KEY,
+    cloud         VARCHAR(10)  NOT NULL,          -- 'AWS' / 'Azure' / 'GCP'
+    resource_type VARCHAR(30)  NOT NULL,           -- 'volume' / 'disk' / 'ip'
+    resource_id   VARCHAR(200) NOT NULL,
+    reason        TEXT,
+    detected_at   TIMESTAMPTZ  DEFAULT now(),
+    resolved_at   TIMESTAMPTZ,
+    CONSTRAINT uq_unused_cloud_resource UNIQUE (cloud, resource_id, detected_at)
+);
+CREATE INDEX IF NOT EXISTS idx_unused_resources_cloud ON unused_resources (cloud, detected_at);
+
+-- [10주차] 예약 인스턴스 추천 컬럼 추가
+ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS commitment_recommendation VARCHAR(50);
+ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS estimated_discount_pct FLOAT;
+
+-- [10주차] 비용 예측
+CREATE TABLE IF NOT EXISTS cost_forecast (
+    id             SERIAL PRIMARY KEY,
+    cloud          VARCHAR(10)  NOT NULL,
+    forecast_date  DATE         NOT NULL,
+    predicted_cost FLOAT,
+    lower_bound    FLOAT,
+    upper_bound    FLOAT,
+    generated_at   TIMESTAMPTZ  DEFAULT now(),
+    CONSTRAINT uq_forecast_cloud_date UNIQUE (cloud, forecast_date, generated_at)
+);
