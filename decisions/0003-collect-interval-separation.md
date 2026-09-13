@@ -1,4 +1,4 @@
-# 0008 - Azure Cost Management API 429 대응: 재시도 vs 호출 인터벌 분리
+# 0003 - Azure Cost Management API 429 대응: 재시도 vs 호출 인터벌 분리
 
 ## Context
 
