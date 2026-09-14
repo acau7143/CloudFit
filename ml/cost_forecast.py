@@ -1,10 +1,14 @@
+import os
 import pandas as pd
 import asyncpg
 import asyncio
 import argparse
 from prophet import Prophet
+from pathlib import Path
+from dotenv import load_dotenv
 
-DATABASE_URL = "postgresql://finops:finops123@localhost:5432/finops_db"
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 
 async def fetch_cost_history(cloud: str) -> pd.DataFrame:

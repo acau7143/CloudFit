@@ -4,7 +4,7 @@ services:
     container_name: finops_db
     environment:
       POSTGRES_USER: finops
-      POSTGRES_PASSWORD: finops123
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: finops_db
     ports:
       - "5432:5432"
@@ -23,7 +23,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql://finops:finops123@db:5432/finops_db
+      DATABASE_URL: postgresql://finops:${DB_PASSWORD}@db:5432/finops_db
     depends_on:
       db:
         condition: service_healthy

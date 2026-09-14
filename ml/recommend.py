@@ -1,8 +1,12 @@
+import os
 import asyncpg
 import asyncio
 from datetime import datetime, timezone
+from pathlib import Path
+from dotenv import load_dotenv
 
-DATABASE_URL = "postgresql://finops:finops123@localhost:5432/finops_db"
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 CPU_THRESHOLD = 15.0  # 이 값(%) 미만이면 저활용으로 판단
 MEM_THRESHOLD = 30.0  # [9주차] 메모리도 이 값(%) 미만이어야 downsize - CPU만 낮고 메모리를 많이 쓰면 잘못된 추천이 됨

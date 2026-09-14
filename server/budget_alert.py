@@ -9,13 +9,13 @@ import os
 from datetime import date
 
 import asyncpg
+from pathlib import Path
+from dotenv import load_dotenv
 
 from notifier import send_slack_alert
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://finops:finops123@localhost:5432/finops_db",
-)
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 # 클라우드별 월 예산 (USD) - 잠정값, 팀 확정 필요 (decisions/0011 참고)
 MONTHLY_BUDGET = {
