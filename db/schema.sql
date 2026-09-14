@@ -105,3 +105,10 @@ CREATE TABLE IF NOT EXISTS cost_forecast (
     generated_at   TIMESTAMPTZ  DEFAULT now(),
     CONSTRAINT uq_forecast_cloud_date UNIQUE (cloud, forecast_date, generated_at)
 );
+
+-- [8~9주차] anomaly_results 컬럼 추가 (당시 ALTER TABLE만 실행하고 schema.sql 기록 누락)
+ALTER TABLE anomaly_results ADD COLUMN IF NOT EXISTS memory_avg FLOAT;
+ALTER TABLE anomaly_results ADD COLUMN IF NOT EXISTS disk_avg FLOAT;
+ALTER TABLE anomaly_results ADD COLUMN IF NOT EXISTS cpu_anomaly BOOLEAN;
+ALTER TABLE anomaly_results ADD COLUMN IF NOT EXISTS mem_anomaly BOOLEAN;
+ALTER TABLE anomaly_results ADD COLUMN IF NOT EXISTS disk_anomaly BOOLEAN;
