@@ -12,10 +12,22 @@ CPU_THRESHOLD = 15.0  # 이 값(%) 미만이면 저활용으로 판단
 MEM_THRESHOLD = 30.0  # [9주차] 메모리도 이 값(%) 미만이어야 downsize - CPU만 낮고 메모리를 많이 쓰면 잘못된 추천이 됨
 
 # [10주차] 예약 인스턴스(RI) 추천 기준
-UPTIME_THRESHOLD = 0.90          # 최근 7일 가동 시간 비율이 이 값 이상이면 RI 추천
+UPTIME_THRESHOLD = 0.90          # 최근 7일 가동 시간 비율이 이 값 이상이면 RI/CUD 추천
 COLLECTION_INTERVAL_MIN = 5      # 리소스 수집 주기(cron, 분 단위)
 EXPECTED_SAMPLES_7D = int(7 * 24 * 60 / COLLECTION_INTERVAL_MIN)  # 2016
-RI_ESTIMATED_DISCOUNT_PCT = 35.0  # AWS RI 1년 No Upfront 기준 대략치(30~40%), decisions/0012에 출처 기록 예정
+
+# [10주차, GCP 트랙에서 클라우드별로 분리] 클라우드별 약정 할인 정보 (1년 약정 기준)
+# - AWS: Reserved Instance, 1년 No Upfront 공식 30~40% 범위 중간값
+# - Azure: Reserved VM Instance, 1년 공식 30~40% 범위 중간값
+# - GCP: Committed Use Discount(CUD), 공식 문서(cloud.google.com/compute/docs/instances/
+#   committed-use-discounts-overview)는 "최대 55%"(일반 시리즈, 1~3년 범위)/"최대 70%"(메모리 최적화)만
+#   제공하고 1년 단독 수치는 없어서, AWS/Azure와 동일하게 "1년 기준" 방법론을 맞추기 위해
+#   업계 통용 근사치(37%)를 채택. 출처와 대안 비교는 decisions/0012 참고.
+COMMITMENT_INFO = {
+    'AWS':   {'label': 'reserved_instance', 'discount_pct': 35.0},
+    'Azure': {'label': 'reserved_instance', 'discount_pct': 35.0},
+    'GCP':   {'label': 'committed_use',     'discount_pct': 37.0},
+}
 
 
 async def fetch_metrics_by_instance(conn):
@@ -81,18 +93,26 @@ def judge(avg_cpu, avg_mem, total_cost):
     return 'keep', f'최근 7일 평균 CPU {cpu_str}, 메모리 {mem_str} - 정상 범위'
 
 
-def judge_commitment(uptime_ratio):
-    """[10주차] 최근 7일 가동 시간 비율 기준 예약 인스턴스(RI) 전환 추천.
+def judge_commitment(cloud, uptime_ratio):
+    """[10주차] 최근 7일 가동 시간 비율 기준 약정 할인 전환 추천.
+    [GCP 트랙에서 수정] 클라우드마다 정식 명칭·할인율이 달라(AWS/Azure: Reserved
+    Instance ~35%, GCP: Committed Use Discount ~37%) COMMITMENT_INFO로 분기한다.
+    이전엔 cloud 구분 없이 AWS 기준(35%, 'reserved_instance')을 전부에 적용하던 버그가 있었음.
     기존 downsize 로직과 독립적으로 판단 - 둘 다 해당될 수도 있음
-    (계속 떠있지만 저활용이라 downsize도, RI도 같이 나올 수 있음)."""
+    (계속 떠있지만 저활용이라 downsize도, 약정 할인도 같이 나올 수 있음)."""
     if uptime_ratio is None:
         return None, None, '가동 시간 데이터 없음'
+
+    info = COMMITMENT_INFO.get(cloud)
+    if info is None:
+        return None, None, f'{cloud}는 약정 할인 정보 미등록'
+
     if uptime_ratio >= UPTIME_THRESHOLD:
         return (
-            'reserved_instance',
-            RI_ESTIMATED_DISCOUNT_PCT,
+            info['label'],
+            info['discount_pct'],
             f'최근 7일 가동 시간 비율 {uptime_ratio*100:.1f}%로 상시 가동에 가까움 - '
-            f'RI 전환 시 약 {RI_ESTIMATED_DISCOUNT_PCT:.0f}% 절감 예상',
+            f'{info["label"]} 전환 시 약 {info["discount_pct"]:.0f}% 절감 예상',
         )
     return (
         'keep_on_demand',
@@ -124,9 +144,9 @@ async def generate_recommendations():
 
         recommendation, reason = judge(avg_cpu, avg_mem, total_cost)
 
-        # [10주차] RI 추천 - 기존 downsize 판단과 별개 컬럼
+        # [10주차] 약정 할인 추천 - 기존 downsize 판단과 별개 컬럼
         uptime_ratio = uptime_by_instance.get((cloud, instance_id))
-        commitment_recommendation, estimated_discount_pct, commitment_reason = judge_commitment(uptime_ratio)
+        commitment_recommendation, estimated_discount_pct, commitment_reason = judge_commitment(cloud, uptime_ratio)
 
         await conn.execute("""
             INSERT INTO recommendations

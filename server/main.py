@@ -34,6 +34,13 @@ class CostRecordIn(BaseModel):
     granularity: str = "DAILY"
 
 
+class UnusedResourceIn(BaseModel):
+    cloud: str                              # 'AWS' / 'Azure' / 'GCP'
+    resource_type: str                      # 'disk' / 'ip' / 'volume'
+    resource_id: str
+    reason: Optional[str] = None
+
+
 # --- 엔드포인트 ---
 
 @app.get("/health")
@@ -145,6 +152,8 @@ async def get_anomalies(
     """)
     result = await db.execute(sql, params)
     return [dict(row._mapping) for row in result.fetchall()]
+
+
 @app.get("/recommendations")
 async def get_recommendations(
     cloud: Optional[str] = None,
@@ -169,4 +178,68 @@ async def get_recommendations(
         LIMIT 100
     """)
     result = await db.execute(sql, params)
+    return [dict(row._mapping) for row in result.fetchall()]
+
+
+@app.post("/unused-resources", status_code=201)
+async def save_unused_resource(item: UnusedResourceIn, db: AsyncSession = Depends(get_db)):
+    sql = text("""
+        INSERT INTO unused_resources (cloud, resource_type, resource_id, reason)
+        VALUES (:cloud, :resource_type, :resource_id, :reason)
+    """)
+    await db.execute(sql, item.model_dump())
+    await db.commit()
+    return {"status": "saved"}
+
+
+@app.get("/unused-resources")
+async def get_unused_resources(
+    cloud: Optional[str] = None,
+    only_active: bool = True,
+    db: AsyncSession = Depends(get_db)
+):
+    """미사용 리소스 조회 (기본: 아직 안 정리된 것만, cloud로 추가 필터 가능)"""
+    conditions = []
+    params = {}
+    if cloud:
+        conditions.append("cloud = :cloud")
+        params["cloud"] = cloud
+    if only_active:
+        conditions.append("resolved_at IS NULL")
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    sql = text(f"""
+        SELECT cloud, resource_type, resource_id, reason, detected_at, resolved_at
+        FROM unused_resources
+        {where}
+        ORDER BY detected_at DESC
+        LIMIT 100
+    """)
+    result = await db.execute(sql, params)
+    return [dict(row._mapping) for row in result.fetchall()]
+
+
+@app.get("/forecast")
+async def get_forecast(cloud: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    """비용 예측 조회 (cloud로 필터 가능). 같은 날짜에 여러 번 예측이 쌓여도
+    (cloud, forecast_date)별 가장 최근 예측(generated_at 최신) 하나만 반환한다."""
+    if cloud:
+        result = await db.execute(
+            text("""
+                SELECT DISTINCT ON (cloud, forecast_date)
+                    cloud, forecast_date, predicted_cost, lower_bound, upper_bound, generated_at
+                FROM cost_forecast
+                WHERE cloud = :cloud
+                ORDER BY cloud, forecast_date, generated_at DESC
+            """),
+            {"cloud": cloud},
+        )
+    else:
+        result = await db.execute(
+            text("""
+                SELECT DISTINCT ON (cloud, forecast_date)
+                    cloud, forecast_date, predicted_cost, lower_bound, upper_bound, generated_at
+                FROM cost_forecast
+                ORDER BY cloud, forecast_date, generated_at DESC
+            """)
+        )
     return [dict(row._mapping) for row in result.fetchall()]
