@@ -24,6 +24,7 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql://finops:${DB_PASSWORD}@db:5432/finops_db
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET}
     depends_on:
       db:
         condition: service_healthy
