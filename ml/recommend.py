@@ -17,12 +17,13 @@ COLLECTION_INTERVAL_MIN = 5      # 리소스 수집 주기(cron, 분 단위)
 EXPECTED_SAMPLES_7D = int(7 * 24 * 60 / COLLECTION_INTERVAL_MIN)  # 2016
 
 # [10주차, GCP 트랙에서 클라우드별로 분리] 클라우드별 약정 할인 정보 (1년 약정 기준)
-# - AWS: Reserved Instance, 1년 No Upfront 공식 30~40% 범위 중간값
-# - Azure: Reserved VM Instance, 1년 공식 30~40% 범위 중간값
-# - GCP: Committed Use Discount(CUD), 공식 문서(cloud.google.com/compute/docs/instances/
-#   committed-use-discounts-overview)는 "최대 55%"(일반 시리즈, 1~3년 범위)/"최대 70%"(메모리 최적화)만
-#   제공하고 1년 단독 수치는 없어서, AWS/Azure와 동일하게 "1년 기준" 방법론을 맞추기 위해
-#   업계 통용 근사치(37%)를 채택. 출처와 대안 비교는 decisions/0012 참고.
+# - AWS: Reserved Instance, 1년 No Upfront 공식 30~40% 범위 중간값 (근사치, AWS Price List API 실측 검증 예정)
+# - Azure: Reserved VM Instance, 1년 공식 30~40% 범위 중간값 (근사치, Retail Prices API 실측 검증 예정 - ml/azure_reservation_lookup.py)
+# - GCP: Committed Use Discount(CUD), Cloud Billing Catalog API로 e2 계열(us-central1) 실측 조회함
+#   (2026-09-19, ml/gcp_cud_lookup.py). OnDemand Core $0.021812/h + Ram $0.002924/h 대비
+#   Commit1Yr Core $0.013741/h + Ram $0.001842/h = 실측 할인율 37.00%. 과거엔 공식 문서에
+#   1년 단독 수치가 없어 업계 통용 근사치(37%)를 썼는데, 실측치로 교체해도 거의 같은 값이 나옴
+#   (근사치가 우연히 정확했음). 출처와 계산 과정은 decisions/0012 참고.
 COMMITMENT_INFO = {
     'AWS':   {'label': 'reserved_instance', 'discount_pct': 35.0},
     'Azure': {'label': 'reserved_instance', 'discount_pct': 35.0},
