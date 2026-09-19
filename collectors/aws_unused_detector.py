@@ -3,10 +3,12 @@ AWS 미사용 리소스 탐지 모듈 (9주차)
 - 미연결 EBS 볼륨: describe_volumes(status=available)
 - 미연결 Elastic IP: describe_addresses()에서 AssociationId 없는 것
 - 탐지 결과는 collectors/server_client.py를 통해 중앙 서버(/unused-resources)로 전송
-- 탐지된 게 있으면 server/notifier.py를 통해 Slack 알림도 보낸다
+- 두 번 연속(재탐지) 발견된 것만 server/notifier.py를 통해 Slack 알림을 보낸다
+  (방금 생성한 리소스가 1회성으로 잡혀서 바로 알림 가는 오탐 방지)
 """
 import os
 import sys
+import json
 
 import boto3
 
@@ -17,6 +19,9 @@ from notifier import send_slack_alert
 
 REGION = "ap-northeast-2"
 ec2 = boto3.client("ec2", region_name=REGION)
+
+# 직전 실행의 탐지 결과를 저장해두는 로컬 상태 파일 (이 EC2 안에서만 유효)
+STATE_FILE = os.path.join(os.path.dirname(__file__), ".aws_unused_state.json")
 
 
 def detect_unused_volumes():
@@ -50,8 +55,27 @@ def detect_unused_ips():
     return results
 
 
+def _resource_key(item: dict) -> str:
+    """resource_type + resource_id로 고유 키를 만든다 (볼륨/IP가 같은 ID값을 가질 가능성 대비)."""
+    return f"{item['resource_type']}:{item['resource_id']}"
+
+
+def load_previous_ids() -> set:
+    """직전 실행에서 탐지됐던 리소스 키 목록을 불러온다. 첫 실행이면 빈 집합."""
+    if not os.path.exists(STATE_FILE):
+        return set()
+    with open(STATE_FILE, "r", encoding="utf-8") as f:
+        return set(json.load(f))
+
+
+def save_current_ids(ids: set):
+    """이번 실행의 탐지 키 목록을 저장한다 - 다음 실행이 이걸 '직전 결과'로 사용함."""
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(sorted(ids), f, ensure_ascii=False)
+
+
 def detect_unused(dry_run: bool = False):
-    """미사용 리소스를 전부 탐지해서 반환한다. dry_run=False면 서버 전송 + Slack 알림까지 수행한다."""
+    """미사용 리소스를 전부 탐지해서 반환한다. dry_run=False면 서버 전송 + 재탐지 시 Slack 알림까지 수행한다."""
     unused = detect_unused_volumes() + detect_unused_ips()
 
     if dry_run:
@@ -67,19 +91,28 @@ def detect_unused(dry_run: bool = False):
             print(f"[전송 실패] {item['resource_type']} {item['resource_id']} → {r.status_code} {r.text}")
     print(f"[결과] 성공 {ok} / 실패 {fail} (총 {len(unused)}건)")
 
-    if unused:
-        lines = [f"- {i['resource_type']} {i['resource_id']}: {i['reason']}" for i in unused]
+    # [9주차] 재탐지 로직: 이번 탐지 결과와 직전 탐지 결과 둘 다에 있는 것만 알림 대상
+    current_ids = {_resource_key(i) for i in unused}
+    previous_ids = load_previous_ids()
+    repeated_ids = current_ids & previous_ids
+    repeated_items = [i for i in unused if _resource_key(i) in repeated_ids]
+
+    if repeated_items:
+        lines = [f"- {i['resource_type']} {i['resource_id']}: {i['reason']}" for i in repeated_items]
         send_slack_alert(
             "[미사용 리소스 발견] AWS",
-            f"{len(unused)}건 발견\n" + "\n".join(lines),
+            f"{len(repeated_items)}건 (재탐지 확인됨)\n" + "\n".join(lines),
         )
+    else:
+        print("[정보] 재탐지된 리소스 없음 - 알림 스킵 (신규 탐지분은 다음 실행에서 재확인)")
+
+    save_current_ids(current_ids)
 
     return unused
 
 
 if __name__ == "__main__":
     import argparse
-    import json
 
     parser = argparse.ArgumentParser(description="AWS 미사용 리소스 탐지기")
     parser.add_argument(
