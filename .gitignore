@@ -18,4 +18,4 @@ Thumbs.db
 
 # 클로드 프로젝트 전용 (개인 지침/대화 백업 — 팀 저장소엔 올리지 않음)
 CLAUDE.md
-chat-archive/
+chat-archive/collectors/.gcp_unused_state.json
