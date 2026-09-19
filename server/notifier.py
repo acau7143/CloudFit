@@ -1,5 +1,15 @@
 import os
+from pathlib import Path
+
 import requests
+
+# server/notifier.py 기준 프로젝트 루트(.env 있는 곳)를 명시적으로 지정해서 읽는다.
+# dotenv가 없는 환경에서도 셸 환경변수만으로 동작 가능하게 try/except로 방어.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:
+    pass
 
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
 
