@@ -25,7 +25,7 @@ EXPECTED_SAMPLES_7D = int(7 * 24 * 60 / COLLECTION_INTERVAL_MIN)  # 2016
 #   1년 단독 수치가 없어 업계 통용 근사치(37%)를 썼는데, 실측치로 교체해도 거의 같은 값이 나옴
 #   (근사치가 우연히 정확했음). 출처와 계산 과정은 decisions/0012 참고.
 COMMITMENT_INFO = {
-    'AWS':   {'label': 'reserved_instance', 'discount_pct': 35.0},
+    'AWS':   {'label': 'reserved_instance', 'discount_pct': 39.23},
     'Azure': {'label': 'reserved_instance', 'discount_pct': 35.0},
     'GCP':   {'label': 'committed_use',     'discount_pct': 37.0},
 }
