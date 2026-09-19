@@ -31,3 +31,4 @@ urllib3==2.7.0
 # google-cloud-monitoring
 # google-cloud-bigquery
 # google-api-python-client
+python-multipart
