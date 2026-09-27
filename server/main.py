@@ -192,6 +192,39 @@ async def get_recommendations(
     return [dict(row._mapping) for row in result.fetchall()]
 
 
+@app.get("/cost-by-owner")
+async def cost_by_owner(db: AsyncSession = Depends(get_db)):
+    """[오너십 규칙] allocation_rules로 인스턴스를 오너별로 묶어 비용 합계를 낸다.
+    규칙 개수가 적어서, SQL로 억지로 조인하기보다 파이썬에서 매핑하는 게 더 간단하다.
+    recommendations는 매일 새 행이 쌓이므로, 인스턴스별 '최신' 행만 집계 대상으로 쓴다
+    (/forecast의 DISTINCT ON 패턴과 동일한 이유)."""
+    rules_result = await db.execute(
+        text("SELECT pattern, match_type, owner FROM allocation_rules ORDER BY priority ASC")
+    )
+    rules = rules_result.fetchall()
+
+    def resolve(resource_id: str) -> str:
+        for pattern, match_type, owner in rules:
+            if match_type == 'exact' and resource_id == pattern:
+                return owner
+            if match_type == 'prefix' and resource_id.startswith(pattern):
+                return owner
+        return 'Unassigned'
+
+    latest_result = await db.execute(text("""
+        SELECT DISTINCT ON (cloud, instance_id) cloud, instance_id, total_cost_7d
+        FROM recommendations
+        ORDER BY cloud, instance_id, generated_at DESC
+    """))
+
+    totals: dict = {}
+    for cloud, instance_id, total_cost_7d in latest_result.fetchall():
+        owner = resolve(instance_id)
+        totals[owner] = totals.get(owner, 0.0) + (total_cost_7d or 0.0)
+
+    return [{"owner": owner, "total_cost_7d": round(total, 2)} for owner, total in totals.items()]
+
+
 @app.post("/unused-resources", status_code=201)
 async def save_unused_resource(item: UnusedResourceIn, db: AsyncSession = Depends(get_db)):
     sql = text("""
