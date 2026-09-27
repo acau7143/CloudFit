@@ -112,3 +112,21 @@ ALTER TABLE anomaly_results ADD COLUMN IF NOT EXISTS disk_avg FLOAT;
 ALTER TABLE anomaly_results ADD COLUMN IF NOT EXISTS cpu_anomaly BOOLEAN;
 ALTER TABLE anomaly_results ADD COLUMN IF NOT EXISTS mem_anomaly BOOLEAN;
 ALTER TABLE anomaly_results ADD COLUMN IF NOT EXISTS disk_anomaly BOOLEAN;
+
+-- [오너십 규칙] 사람만 아는 "이건 핵심 인프라다" 정보를 등록해두는 명단
+CREATE TABLE allocation_rules (
+    id SERIAL PRIMARY KEY,
+    pattern TEXT NOT NULL,
+    match_type TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    priority INT NOT NULL DEFAULT 100,
+    reason TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- [median/MAD 실험] 기존 3σ 판정과 비교하기 위한 컬럼 추가
+ALTER TABLE anomaly_results
+    ADD COLUMN IF NOT EXISTS cpu_anomaly_mad BOOLEAN,
+    ADD COLUMN IF NOT EXISTS mem_anomaly_mad BOOLEAN,
+    ADD COLUMN IF NOT EXISTS disk_anomaly_mad BOOLEAN,
+    ADD COLUMN IF NOT EXISTS anomaly_mad BOOLEAN;
