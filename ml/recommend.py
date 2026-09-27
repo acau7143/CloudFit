@@ -72,6 +72,21 @@ async def fetch_cost_by_cloud(conn):
     return {r['cloud']: r['total_cost_7d'] for r in rows}
 
 
+async def resolve_owner(conn, resource_id: str) -> str:
+    """[오너십 규칙] allocation_rules 명단을 우선순위 순으로 확인해서 오너를 반환한다.
+    CPU/비용 수치만으로는 '이게 핵심 인프라인지'를 알 수 없어서, 사람이 등록해둔
+    명단을 참고한다 (2026-09-23 EC2 자기 자신 오탐지 사고 이후 도입)."""
+    rules = await conn.fetch(
+        "SELECT pattern, match_type, owner FROM allocation_rules ORDER BY priority ASC"
+    )
+    for rule in rules:
+        if rule['match_type'] == 'exact' and resource_id == rule['pattern']:
+            return rule['owner']
+        if rule['match_type'] == 'prefix' and resource_id.startswith(rule['pattern']):
+            return rule['owner']
+    return 'Unassigned'
+
+
 def judge(avg_cpu, avg_mem, total_cost):
     # [9주차] CPU와 메모리 둘 다 15% 미만이면서 비용이 발생 중이면 downsize
     # 하나라도 기준 이상이면 keep - CPU만 낮고 메모리를 많이 먹는 인스턴스를
@@ -144,6 +159,12 @@ async def generate_recommendations():
         total_cost = cost_by_cloud.get(cloud)
 
         recommendation, reason = judge(avg_cpu, avg_mem, total_cost)
+
+        # [오너십 규칙] 핵심 인프라로 등록된 인스턴스는 downsize 추천에서 제외
+        owner = await resolve_owner(conn, instance_id)
+        if owner == 'CloudFit-Core-Infra' and recommendation == 'downsize':
+            recommendation = 'keep'
+            reason = f'{reason} (오너십 규칙: {owner} - 핵심 인프라로 제외)'
 
         # [10주차] 약정 할인 추천 - 기존 downsize 판단과 별개 컬럼
         uptime_ratio = uptime_by_instance.get((cloud, instance_id))
