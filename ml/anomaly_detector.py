@@ -1,4 +1,5 @@
 import os
+import sys
 import argparse
 import pickle
 import pandas as pd
@@ -9,6 +10,9 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 DATABASE_URL = os.environ["DATABASE_URL"]
+
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from server.notifier import send_slack_alert
 
 MAD_WINDOW_DAYS = 7
 MAD_THRESHOLD = 3.5
@@ -30,14 +34,10 @@ def is_out_of_range(series, mean, std, min_std_ratio: float = 0.05):
 
 def is_out_of_range_mad(series, median, mad, threshold: float = MAD_THRESHOLD, min_mad_ratio: float = 0.05):
     """
-    [median/MAD 실험, 2026-09-27 도입] modified z-score 기반 판정.
-    modified_z = 0.6745 * (x - median) / MAD  (Iglewicz & Hoaglin 권장 공식, 임계값 3.5)
-
-    is_out_of_range()(평균/표준편차 방식)의 약점: 이상치 자체가 평균과 표준편차를 같이
-    끌어올려서, 진짜 이상치가 다음번엔 "정상 범위 안"으로 둔갑할 수 있음 (masking).
-    median/MAD는 극단값 몇 개로는 거의 안 흔들려서 이상치에 훨씬 강하다.
-
-    디스크처럼 거의 안 움직이는 지표에 대한 안전장치는 is_out_of_range()와 같은 이유로 유지.
+    [median/MAD, 2026-09-27 도입] modified z-score 기반 판정.
+    modified_z = 0.6745 × (x - median) / MAD (Iglewicz & Hoaglin, 임계값 3.5)
+    2026-09-29: 실측 비교 결과 median/MAD를 공식 판정 기준으로 채택(decisions/0014).
+    기존 3σ(is_out_of_range)는 DB엔 계속 쌓이지만 Slack 알림/Grafana 기본 화면엔 안 씀.
     """
     effective_mad = max(mad or 0, abs(median) * min_mad_ratio)
     if effective_mad > 0:
@@ -48,13 +48,9 @@ def is_out_of_range_mad(series, median, mad, threshold: float = MAD_THRESHOLD, m
 
 async def fetch_rolling_baseline(conn, cloud: str, window_days: int = MAD_WINDOW_DAYS):
     """
-    [median/MAD 실험] train.py가 주 1회 계산해서 model.pkl에 고정해두는 평균/표준편차와 달리,
-    이 baseline은 매 실행마다 최근 window_days(기본 7일)치 실제 데이터로 새로 계산한다.
-    -> 재학습 주기(매주 1회)를 기다리지 않고 최근 추세 변화를 더 빨리 반영 (rolling window).
-
-    주의: --full로 과거 데이터 전체를 재계산할 때도 baseline은 항상 "지금 시점 기준 최근 7일"
-    하나만 쓴다. 각 행의 타임스탬프 시점에 맞춰 baseline을 다시 구하는 건 아니라서,
-    오래된 과거 데이터에 대한 --full 결과는 참고용으로만 보는 게 맞다.
+    [median/MAD] train.py의 주 1회 갱신과 달리, 매 실행마다 최근 window_days(기본 7일)치
+    실제 데이터로 baseline을 새로 계산한다 (rolling window).
+    주의: --full 재처리 시에도 baseline은 항상 "지금 시점 기준 최근 7일" 하나만 쓴다.
     """
     rows = await conn.fetch(f"""
         SELECT cpu_avg, COALESCE(memory_avg, 0) AS memory_avg, COALESCE(disk_avg, 0) AS disk_avg
@@ -76,9 +72,21 @@ async def fetch_rolling_baseline(conn, cloud: str, window_days: int = MAD_WINDOW
     return baseline
 
 
+async def was_anomalous_before(conn, cloud: str, instance_id: str, before_timestamp) -> bool:
+    """[Slack 알림 스팸 방지] 이번 배치 이전 마지막 판정이 이미 이상(anomaly_mad)이었는지 확인.
+    이미 이상 상태였다면 또 알리지 않고, '정상 -> 이상'으로 막 전환된 순간에만 알린다."""
+    prev = await conn.fetchrow("""
+        SELECT anomaly_mad FROM anomaly_results
+        WHERE cloud = $1 AND instance_id = $2 AND timestamp < $3
+        ORDER BY timestamp DESC
+        LIMIT 1
+    """, cloud, instance_id, before_timestamp)
+    return bool(prev['anomaly_mad']) if prev else False
+
+
 async def detect_and_save(full: bool = False):
     with open('ml/model.pkl', 'rb') as f:
-        saved = pickle.load(f)  # { cloud: {'model':..., 'scaler':..., 'cpu_mean':..., 'cpu_std':..., 'mem_mean':..., 'mem_std':..., 'disk_mean':..., 'disk_std':...} }
+        saved = pickle.load(f)
 
     conn = await asyncpg.connect(DATABASE_URL)
 
@@ -121,14 +129,11 @@ async def detect_and_save(full: bool = False):
 
         X = group[features].fillna(0)
         X_scaled = scaler.transform(X)
-
-        # score는 계속 참고 지표로 저장 (3개 지표를 다 반영한 IsolationForest 점수)
         scores = model.score_samples(X_scaled)
 
         group = group.copy()
         group['score'] = scores
 
-        # [9주차] CPU/메모리/디스크 각각 독립적으로 평균±3σ 판정
         cpu_out = is_out_of_range(group['cpu_avg'], saved[cloud]['cpu_mean'], saved[cloud]['cpu_std'])
         mem_out = is_out_of_range(group['memory_avg'], saved[cloud]['mem_mean'], saved[cloud]['mem_std'])
         disk_out = is_out_of_range(group['disk_avg'], saved[cloud]['disk_mean'], saved[cloud]['disk_std'])
@@ -136,9 +141,8 @@ async def detect_and_save(full: bool = False):
         group['cpu_anomaly'] = cpu_out
         group['mem_anomaly'] = mem_out
         group['disk_anomaly'] = disk_out
-        group['anomaly'] = cpu_out | mem_out | disk_out  # 종합 판정 (요약용, 셋 중 하나라도 이상)
+        group['anomaly'] = cpu_out | mem_out | disk_out
 
-        # [median/MAD 실험] 같은 데이터에 robust 통계 방식을 나란히 적용해서 비교
         baseline = await fetch_rolling_baseline(conn, cloud)
         if baseline is None:
             print(f"[경고] {cloud} rolling baseline 계산할 데이터 없음 - MAD 판정 전부 정상 처리")
@@ -183,6 +187,33 @@ async def detect_and_save(full: bool = False):
                  float(row['score']),
                  bool(row['anomaly_mad']), bool(row['cpu_anomaly_mad']),
                  bool(row['mem_anomaly_mad']), bool(row['disk_anomaly_mad']))
+
+        # [Slack 알림] MAD 기준 '정상 -> 이상' 전환된 인스턴스만 알림 (스팸 방지)
+        # --full 백필 때는 과거 데이터라 지금 알림 보내는 게 의미 없어서 평소 운영에서만 발송
+        if not full:
+            for instance_id, inst_group in group.groupby('instance_id'):
+                inst_group = inst_group.sort_values('timestamp')
+                latest = inst_group.iloc[-1]
+                if not bool(latest['anomaly_mad']):
+                    continue
+
+                earliest_ts = inst_group['timestamp'].min()
+                if await was_anomalous_before(conn, cloud, instance_id, earliest_ts):
+                    continue
+
+                reasons = []
+                if bool(latest['cpu_anomaly_mad']):
+                    reasons.append(f"CPU {latest['cpu_avg']:.1f}%")
+                if bool(latest['mem_anomaly_mad']):
+                    reasons.append(f"메모리 {latest['memory_avg']:.1f}%")
+                if bool(latest['disk_anomaly_mad']):
+                    reasons.append(f"디스크 {latest['disk_avg']:.1f}%")
+
+                send_slack_alert(
+                    f"[이상탐지] {cloud} {instance_id}",
+                    f"median/MAD 기준 이상 감지: {', '.join(reasons)}\n시각: {latest['timestamp']}"
+                )
+                print(f"[ALERT] {cloud} {instance_id} 이상탐지 Slack 알림 발송")
 
         anomaly_count = int(group['anomaly'].sum())
         anomaly_mad_count = int(group['anomaly_mad'].sum())
