@@ -1,0 +1,4 @@
+# 리눅스 VM에서 실행되는 파일은 윈도우에서 커밋해도 줄바꿈이 LF로 유지돼야 한다.
+# (CRLF가 섞이면 쉘 스크립트와 cron 파일이 동작하지 않는다)
+*.sh   text eol=lf
+*.cron text eol=lf

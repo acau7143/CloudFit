@@ -1,0 +1,4 @@
+# AWS 수집기. 운영 EC2의 crontab 기준 (runbook/crontab-reference.md)
+*/5 * * * * cd @ROOT@ && @PYTHON@ collectors/aws_exporter.py >> logs/aws_resource.log 2>&1
+0 9 * * * cd @ROOT@ && @PYTHON@ collectors/aws_exporter.py --costs >> logs/aws_cost.log 2>&1
+15 9 * * * cd @ROOT@ && @PYTHON@ collectors/aws_unused_detector.py >> logs/unused_resource.log 2>&1

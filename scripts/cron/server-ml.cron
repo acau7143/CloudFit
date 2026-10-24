@@ -1,0 +1,9 @@
+# 서버 VM의 ML·알림 배치. 운영 EC2의 crontab 기준 (runbook/crontab-reference.md)
+# 09:30~09:50 줄의 순서(예측 → 예산 → 추천)는 의존 관계가 있어 바꾸지 말 것.
+*/10 * * * * cd @ROOT@ && @PYTHON@ ml/anomaly_detector.py >> logs/anomaly.log 2>&1
+0 3 * * 0 cd @ROOT@ && @PYTHON@ ml/train.py >> logs/train.log 2>&1
+30 9 * * * cd @ROOT@ && @PYTHON@ ml/cost_forecast.py --cloud AWS >> logs/forecast.log 2>&1
+35 9 * * * cd @ROOT@ && @PYTHON@ ml/cost_forecast.py --cloud Azure >> logs/forecast.log 2>&1
+40 9 * * * cd @ROOT@ && @PYTHON@ ml/cost_forecast.py --cloud GCP >> logs/forecast.log 2>&1
+45 9 * * * cd @ROOT@ && @PYTHON@ server/budget_alert.py >> logs/budget_alert.log 2>&1
+50 9 * * * cd @ROOT@ && @PYTHON@ ml/recommend.py >> logs/recommend.log 2>&1

@@ -1,0 +1,8 @@
+# Azure 수집기. Azure VM(azureuser)의 운영 crontab 기준 (2026-10-24 확인, runbook/crontab-reference.md)
+# 자원 메트릭은 5분마다, 비용은 하루 한 번(--costs) 수집·전송한다 (decisions/0003).
+# Cost Management API 는 스코프당 분당 4회 제한이 있어(incidents/INC-001) 비용을 5분마다 부르면 안 된다.
+# azure_exporter.py 가 --costs 인자를 지원하는 버전부터 5분 실행이 자원만 보낸다.
+# 이전 버전은 --costs 를 몰라 이 줄이 매일 오류로 끝나고, 5분 실행이 비용도 보낸다 (운영 10/24 상태).
+*/5 * * * * cd @ROOT@ && @PYTHON@ collectors/azure_exporter.py >> logs/azure_resource.log 2>&1
+0 9 * * * cd @ROOT@ && @PYTHON@ collectors/azure_exporter.py --costs >> logs/azure_cost.log 2>&1
+15 9 * * * cd @ROOT@ && @PYTHON@ collectors/azure_unused_detector.py >> logs/unused_resource.log 2>&1

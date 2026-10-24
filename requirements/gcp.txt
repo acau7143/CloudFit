@@ -1,0 +1,8 @@
+# GCP 수집기 VM 전용 최소 패키지 (collectors/gcp_exporter.py, gcp_unused_detector.py)
+# 버전 기준은 루트 requirements.txt 이다. 올릴 때는 같이 올릴 것.
+google-api-python-client==2.198.0
+google-cloud-bigquery==3.42.2
+google-cloud-compute==1.52.0
+google-cloud-monitoring==2.31.0
+python-dotenv==1.2.2
+requests==2.34.2

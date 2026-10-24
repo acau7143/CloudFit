@@ -1,0 +1,7 @@
+# GCP 수집기. 운영 GCP VM의 crontab 기준 (runbook/crontab-reference.md)
+# 자원 메트릭은 5분마다, 비용은 하루 한 번(--costs) 수집·전송한다 (decisions/0003).
+# --costs 분리는 gcp_exporter.py 가 --costs 인자를 지원하는 버전부터 의미가 있다.
+# 이전 버전은 인자를 무시하고 5분 실행마다 비용도 보낸다 (동작에는 문제 없음).
+*/5 * * * * cd @ROOT@ && @PYTHON@ collectors/gcp_exporter.py >> logs/gcp_resource.log 2>&1
+0 9 * * * cd @ROOT@ && @PYTHON@ collectors/gcp_exporter.py --costs >> logs/gcp_cost.log 2>&1
+15 9 * * * cd @ROOT@ && @PYTHON@ collectors/gcp_unused_detector.py >> logs/unused_resource.log 2>&1
