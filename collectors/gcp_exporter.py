@@ -9,10 +9,14 @@ from googleapiclient import discovery
 from datetime import datetime, timedelta, timezone
 from google.cloud import bigquery
 
-PROJECT_ID = "project-3f80ed2e-f0f6-4855-b15"
-ZONE = "asia-northeast3-a"
-INSTANCE_NAME = "finops-test"
+try:
+    from collectors import cloud_config
+except ImportError:  # 스크립트로 직접 실행하면 collectors/가 sys.path[0]
+    import cloud_config
 
+# 프로젝트/존/인스턴스/청구 계정은 .env에서 읽는다 (cloud_config.py, .env.example 참고).
+
+# Compute API 조회가 실패할 때(권한 없음 등)만 쓰는 폴백 표
 MACHINE_SPECS = {
     'e2-micro':  {'vcpu': 2, 'ram_gb': 1},
     'e2-small':  {'vcpu': 2, 'ram_gb': 2},
@@ -105,7 +109,8 @@ def collect_memory(project_id):
     return records
 
 
-def collect_disk(project_id):
+def collect_disk(project_id, device=None):
+    device = device or cloud_config.gcp_disk_device()
     client = monitoring_v3.MetricServiceClient()
     project_name = f"projects/{project_id}"
     now = datetime.now(timezone.utc)
@@ -114,7 +119,10 @@ def collect_disk(project_id):
         client,
         request={
             "name": project_name,
-            "filter": 'metric.type="agent.googleapis.com/disk/percent_used" AND metric.label.device="/dev/sda1" AND metric.label.state="used"',
+            "filter": (
+                'metric.type="agent.googleapis.com/disk/percent_used" '
+                f'AND metric.label.device="{device}" AND metric.label.state="used"'
+            ),
             "interval": monitoring_v3.TimeInterval(
                 end_time=now,
                 start_time=now - timedelta(hours=1)
@@ -147,6 +155,19 @@ def get_instance_spec(project_id, zone, instance_name):
     return machine_type_url.split('/')[-1]
 
 
+def get_machine_specs(project_id, zone, machine_type):
+    """머신 타입의 vCPU/RAM(GB)을 Compute API로 조회한다. 실패하면 폴백 표, 거기도 없으면 {}."""
+    try:
+        compute = discovery.build('compute', 'v1')
+        info = compute.machineTypes().get(
+            project=project_id, zone=zone, machineType=machine_type
+        ).execute()
+        return {"vcpu": info["guestCpus"], "ram_gb": round(info["memoryMb"] / 1024, 2)}
+    except Exception as e:  # 권한이 없어도 수집은 계속돼야 함
+        print(f"[정보] 머신 타입 사양 API 조회 실패, 폴백 표 사용: {e}")
+        return MACHINE_SPECS.get(machine_type, {})
+
+
 def _average(records, key):
     if not records:
         return None
@@ -154,8 +175,10 @@ def _average(records, key):
     return round(sum(values) / len(values), 2)
 
 
-def to_common_record(instance_id, cpu_records, memory_records, disk_records, machine_type):
-    specs = MACHINE_SPECS.get(machine_type, {})
+def to_common_record(instance_id, cpu_records, memory_records, disk_records, machine_type, specs=None):
+    """specs: {"vcpu":.., "ram_gb":..}. 안 주면 폴백 표(MACHINE_SPECS)로 찾는다."""
+    if specs is None:
+        specs = MACHINE_SPECS.get(machine_type, {})
     return {
         "cloud": "GCP",
         "instance_id": instance_id,
@@ -260,15 +283,25 @@ def send_cost_to_server(record: dict) -> bool:
 if __name__ == "__main__":
     dry_run = "--dry-run" in sys.argv
 
+    # 설정이 빠졌으면 수집을 시작하기 전에 빠진 키를 한 번에 안내하고 종료
+    settings = cloud_config.exit_on_config_error(
+        cloud_config.require_env,
+        "GCP_PROJECT_ID", "GCP_ZONE", "GCP_INSTANCE_NAME", "GCP_BILLING_ACCOUNT_ID",
+    )
+    PROJECT_ID = settings["GCP_PROJECT_ID"]
+    ZONE = settings["GCP_ZONE"]
+    INSTANCE_NAME = settings["GCP_INSTANCE_NAME"]
+    BILLING_ACCOUNT_ID = settings["GCP_BILLING_ACCOUNT_ID"]
+
     cpu_records = collect_cpu(PROJECT_ID)
     memory_records = collect_memory(PROJECT_ID)
     disk_records = collect_disk(PROJECT_ID)
     machine_type = get_instance_spec(PROJECT_ID, ZONE, INSTANCE_NAME)
+    specs = get_machine_specs(PROJECT_ID, ZONE, machine_type)
 
     instance_id = cpu_records[0]["instance_id"] if cpu_records else "unknown"
-    record = to_common_record(instance_id, cpu_records, memory_records, disk_records, machine_type)
+    record = to_common_record(instance_id, cpu_records, memory_records, disk_records, machine_type, specs)
 
-    BILLING_ACCOUNT_ID = "0175A5-88C06B-333607"
     cost_records = collect_cost(PROJECT_ID, BILLING_ACCOUNT_ID, machine_type=machine_type)
 
     if dry_run:

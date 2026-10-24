@@ -18,11 +18,11 @@ import requests
 from dotenv import load_dotenv
 from google.cloud import compute_v1
 
+import cloud_config
+
 load_dotenv()
 
-PROJECT_ID = "project-3f80ed2e-f0f6-4855-b15"
-REGION = "asia-northeast3"
-ZONE = "asia-northeast3-a"
+# 프로젝트/존/리전은 .env에서 읽는다 (cloud_config.py, .env.example 참고).
 
 SERVER_URL = os.getenv("SERVER_URL", "http://localhost:8000")
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
@@ -112,7 +112,12 @@ def send_slack_alert(title: str, message: str, color: str = "#ff0000"):
 
 def detect_unused(dry_run: bool = False):
     """미사용 리소스를 전부 탐지해서 반환한다. dry_run=False면 서버 전송 + 재탐지 시 Slack 알림까지 수행한다."""
-    unused = find_unused_disks(PROJECT_ID, ZONE) + find_unused_ips(PROJECT_ID, REGION)
+    cloud_config.require_env("GCP_PROJECT_ID", "GCP_ZONE")  # 빠진 키를 한 번에 안내
+    project_id = cloud_config.gcp_project_id()
+    unused = (
+        find_unused_disks(project_id, cloud_config.gcp_zone())
+        + find_unused_ips(project_id, cloud_config.gcp_region())
+    )
 
     if dry_run:
         return unused
@@ -150,7 +155,7 @@ if __name__ == "__main__":
     parser.add_argument("--dry-run", action="store_true", help="서버 전송 없이 조회만")
     args = parser.parse_args()
 
-    result = detect_unused(dry_run=args.dry_run)
+    result = cloud_config.exit_on_config_error(detect_unused, dry_run=args.dry_run)
 
     if args.dry_run:
         print("=== UNUSED RESOURCES (dry-run, 서버 전송 안 함) ===")
