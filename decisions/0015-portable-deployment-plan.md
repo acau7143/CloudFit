@@ -243,7 +243,7 @@
   - [x] AWS·GCP crontab 확보 → `runbook/crontab-reference.md`
   - [x] AWS·GCP `.env` 키 이름 확보 (AWS: SLACK_WEBHOOK_URL, DB_PASSWORD, DATABASE_URL, GRAFANA_ADMIN_PASSWORD, SLACK_SIGNING_SECRET / GCP: SERVER_URL, SLACK_WEBHOOK_URL)
   - [x] GCP 패키지 버전 확보 (api-python-client 2.198.0 / bigquery 3.42.2 / monitoring 2.31.0)
-  - [ ] Azure VM crontab·`.env` 키 (B 담당, 대기 중)
+  - [x] Azure VM crontab·`.env` 키 확인 (2026-10-24, SSH): `.env` 키는 `.env.example`과 일치, crontab은 `runbook/crontab-reference.md`에 기록
   - [x] GCP `google-cloud-compute` 버전 확보 (1.52.0, `gcp_unused_detector.py`가 import)
   - [x] 대상 범위 확정(열린 질문 1): 팀 내부 재현 우선 (2026-10-24)
   - [ ] 열린 질문 2(클라우드당 VM 1대 전제 유지), `decisions/` 번호 중복 정리
@@ -261,7 +261,7 @@
   - [x] `google-cloud-compute==1.52.0` 반영
   - [ ] Azure 수집기 점검
 - [~] 단계 2: 설치 스크립트, cron 코드화, 사전 점검, 권한 문서, 통합 runbook — **팀 내부 재현 범위로 구현됨(브랜치 `feature/team-reproduction-installer`), 새 환경 실행 검증은 아직**
-  - [x] 2-1 cron 템플릿 `scripts/cron/` (AWS·GCP·서버 ML은 운영 crontab 기준, **Azure는 임시안**), 설치 시 `# >>> cloudfit:이름 >>>` 블록으로만 등록·교체하고 기존 줄은 보존, 등록 전 백업
+  - [x] 2-1 cron 템플릿 `scripts/cron/` (AWS·GCP·Azure·서버 ML 모두 운영 crontab 기준), 설치 시 `# >>> cloudfit:이름 >>>` 블록으로만 등록·교체하고 기존 줄은 보존, 등록 전 백업
   - [x] 2-2 `scripts/install_server.sh` (compose / docker-compose 둘 다 지원, health 대기, ML 배치 cron)
   - [x] 2-3~2-5 `scripts/install_collector.sh <aws|gcp|azure>` + 클라우드별 최소 패키지 `requirements/*.txt`. cron은 `--apply`를 줘야만 등록하고 사전 점검이 실패하면 거부
   - [x] 에이전트: AWS CloudWatch Agent 설정을 `scripts/agents/`에 템플릿으로 저장. Ops Agent·Azure Monitor Agent는 콘솔 권한/DCR 등 수동 단계가 있어 스크립트화하지 않고 runbook 절차로 둠
@@ -270,6 +270,8 @@
   - [x] 2-8 `runbook/new-environment-setup.md`
   - [x] 2-9 Python 3.10+ 가상환경 (`find_python`, 없으면 경고 후 python3)
   - [ ] 새 환경(클린룸)에서 실제 실행 검증 — 로컬에서는 쉘 문법, 가짜 crontab으로 등록 로직, 점검 판정 테스트까지만 확인함
-  - [ ] Azure 실제 crontab 반영 (B 담당)
+  - [x] Azure 실제 crontab 반영 (2026-10-24, 매일 오류로 끝나는 `--costs` 줄은 템플릿에서 제외)
+  - [ ] Azure 미사용 탐지 로그(`logs/unused_resource.log`) 확인 — 시스템 `python3`로 도는 구성이라 GCP처럼 패키지 누락 가능성 점검
+  - [ ] 후속 결정: GCP·Azure 수집기가 실행할 때마다 비용까지 수집·전송함(`--costs` 미지원, Azure는 매일 `--costs` 줄이 오류). 자원 전용 모드/`--costs` 인자 도입 여부
 - [ ] 단계 3: API 인증, DB 포트 제한, Grafana 프로비저닝, 시드, CI
 - [ ] 단계 4: 새 계정 클린룸 검증 (AWS / Azure / GCP / 서버)

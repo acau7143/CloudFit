@@ -134,8 +134,9 @@ bash scripts/install_collector.sh gcp --apply
 
 ## 5. 수집 VM — Azure
 
-> **주의**: Azure cron 템플릿(`scripts/cron/collector-azure.cron`)은 실제 운영 crontab을 받기 전의 **임시안**이다.
-> B 담당자의 `crontab -l`로 교체하기 전에는 `--apply` 하지 말고 미리보기로만 확인한다.
+> Azure cron 템플릿(`scripts/cron/collector-azure.cron`)은 Azure VM의 운영 crontab(2026-10-24 확인) 기준이다.
+> 운영의 "매일 09:00 `--costs`" 줄은 `azure_exporter.py`가 그 인자를 받지 않아 매일 오류로 끝나므로 템플릿에서 뺐다.
+> `azure_exporter.py`는 실행할 때마다(5분) 비용 API도 호출하므로 호출 한도(429, `incidents/INC-001`)에 주의한다.
 
 **5-1. 서비스 프린시펄과 권한** (상세: `azure-collector-setup-1~3.md`)
 
@@ -219,4 +220,4 @@ curl -s "http://localhost:8000/resources?cloud=AWS" | head -c 600
 - `docker-compose.yml`의 Grafana 관리자 비밀번호가 `admin`으로 고정돼 있다 (`.env`의 `GRAFANA_ADMIN_PASSWORD`는 아직 반영되지 않음). 첫 로그인 후 바로 바꾼다.
 - DB 포트(5432)가 모든 인터페이스에 열려 있다 → 보안그룹에서 막는다.
 - 클라우드당 수집 VM 1대 전제다.
-- Azure cron은 임시안이다 (5번 참고).
+- Azure 수집기는 5분마다 비용 API도 호출한다 (5번 참고).

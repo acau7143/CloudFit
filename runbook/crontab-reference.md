@@ -63,4 +63,27 @@
 
 ## Azure VM
 
-> **TODO(B)**: Azure VM에서 `crontab -l` 결과를 받아 여기에 추가한다.
+사용자 `azureuser`, **시스템 `python3`**(가상환경 없음). Ubuntu 24.04, `Standard_B2ats_v2`, Korea Central, 시간대 UTC.
+2026-10-24에 SSH로 확인한 원문이다 (`.env`는 키 이름만 확인).
+
+```cron
+*/5 * * * * cd ~/CloudFit && python3 collectors/azure_exporter.py >> logs/azure_resource.log 2>&1
+0 9 * * * cd ~/CloudFit && python3 collectors/azure_exporter.py --costs >> logs/azure_cost.log 2>&1
+15 9 * * * cd ~/CloudFit && python3 collectors/azure_unused_detector.py  >> logs/unused_resource.log 2>&1
+```
+
+`.env` 키: `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`,
+`AZURE_VM_NAME`, `AZURE_LOG_WORKSPACE_ID`, `SERVER_URL`, `SLACK_WEBHOOK_URL`. `.env.example`의 Azure 섹션과 일치한다
+(선택 키 `AZURE_REGION`은 없고 기본값 `koreacentral`을 쓴다).
+
+알려진 불일치:
+
+- 두 번째 줄(매일 09:00 `--costs`)은 **매일 오류로 끝난다.** `azure_exporter.py`는 `--dry-run`만 받아서
+  `unrecognized arguments: --costs`가 `logs/azure_cost.log`에 남는다. 5분 주기 실행이 이미 비용을 함께 전송하므로
+  (로그에 "비용 데이터 저장 성공") 데이터 손실은 없다.
+- 5분 주기 실행이 실행할 때마다 Cost Management API를 호출한다. 호출 한도(429, `incidents/INC-001`)에 걸릴 수 있어
+  재시도 로직(`690c3f8`)으로 버티는 구조다. 확인 시점(10/24) 로그는 정상 저장이었다.
+- 미사용 탐지(세 번째 줄)도 시스템 `python3`로 도는데 `logs/unused_resource.log`는 아직 확인하지 못했다.
+  (GCP는 같은 구성에서 `dotenv` 누락으로 실패하고 있었다.)
+- 자원 전용 모드나 `--costs` 인자를 도입할지는 GCP와 함께 별도로 결정한다.
+

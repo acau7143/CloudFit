@@ -1,7 +1,7 @@
-# Azure 수집기.
-# TODO(B): 아직 Azure VM의 실제 crontab을 받지 못했다. 아래는 다른 클라우드와 같은 패턴으로 쓴 임시안이다.
-#   - azure_exporter.py는 실행할 때마다 자원 + 비용을 함께 전송한다(--costs 인자 없음).
-#     decisions/0003-collect-interval-separation, incidents/INC-001(비용 API 429)을 보면
-#     운영에서는 주기를 나눠 쓰고 있을 수 있으니 실제 crontab으로 반드시 교체할 것.
+# Azure 수집기. Azure VM(azureuser)의 운영 crontab 기준 (2026-10-24 확인, runbook/crontab-reference.md)
+# azure_exporter.py는 실행할 때마다 자원 + 비용을 함께 수집·전송한다. 그래서 비용 API(Cost Management)가
+# 5분마다 호출되며, 호출 한도(429)는 수집기의 재시도 로직으로 버틴다 (incidents/INC-001).
+# 운영에는 "매일 09:00 --costs" 줄이 하나 더 있지만 azure_exporter.py가 --costs 인자를 받지 않아
+# 매일 'unrecognized arguments' 오류로 끝나고, 5분 주기 실행이 이미 비용을 보내므로 여기서는 뺐다.
 */5 * * * * cd @ROOT@ && @PYTHON@ collectors/azure_exporter.py >> logs/azure_resource.log 2>&1
 15 9 * * * cd @ROOT@ && @PYTHON@ collectors/azure_unused_detector.py >> logs/unused_resource.log 2>&1
