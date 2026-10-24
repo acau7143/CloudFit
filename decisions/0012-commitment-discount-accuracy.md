@@ -10,7 +10,7 @@ GCP Committed Use Discount) 전환 추천 기능(`commitment_recommendation`,
 같은 업계 통용 근사치였다. 문제는 `/recommendations` API가 이 근사치를
 `"estimated_discount_pct": 35.0`처럼 그대로 응답에 내보낸다는 점이다. `float`
 단일값이라 마치 실측 정밀값처럼 보이는데, 실제로는 근사치라는 게 API 응답만
-봐서는 전혀 드러나지 않는다.
+봐서는 전혀 드러나지 않는다. 통합 검증(Day3) 과정에서 이 문제가 지적됨(성민).
 
 ## Decision
 
@@ -111,9 +111,18 @@ Azure 트랙에서도 유효한지 확인함. `azure_exporter.py`는 Azure VM **
 멀티클라우드 대시보드에 Azure 비용 예측 패널 추가: 실제 비용(실선) + 예측
 비용(점선, Line style override) + 예측 상·하한 음영(Fill below to override).
 
+## Result — AWS (A)
+
+- 조회 스크립트: `ml/aws_ri_lookup.py`, `t3.micro` / `ap-northeast-2` 기준
+  1년 No Upfront 실측 할인율 **39.23%**
+- AWS Price List API(`boto3.client('pricing')`)는 실제 EC2 리전과 무관하게
+  **`us-east-1`에서만 서비스**된다 (다른 리전으로 클라이언트를 만들면 빈 결과가
+  나옴). 필요 IAM 권한은 `pricing:GetProducts` (읽기 전용)
+- `ml/recommend.py`의 `COMMITMENT_INFO['AWS']`에 반영 완료
+
 ## 남은 것
 
-- AWS(A), GCP(C) 파트는 각 담당자가 채우거나, `ml/recommend.py` 주석에 이미
-  반영된 실측치(AWS 39.23%, GCP 37.0%)를 그대로 가져와 위 표에 채워 넣으면
+- GCP(C) 파트 Result 섹션은 아직 비어 있음. 실측치(37.0%)는 `ml/recommend.py`의
+  `COMMITMENT_INFO['GCP']`에 이미 반영돼 있으므로 조회 방법·계산 근거를 채우면
   Context/Result 취합 완료
 - 3개 클라우드 Result가 모두 확정되면 팀 전체 리뷰 후 `main`/`dev`로 merge

@@ -9,20 +9,24 @@ AWS / Azure / GCP 세 클라우드에 흩어진 자원 사용률과 비용 데�
 
 ---
 
-## 지금 뭐가 되나 (4주차 기준)
+## 지금 뭐가 되나 (10주차 기준)
 
-각자 맡은 클라우드에서 CPU·메모리·디스크·인스턴스 사양·비용 데이터를 수집해서 공통 형식으로 바꾸고, 중앙 서버(FastAPI)를 거쳐 PostgreSQL에 저장하는 파이프라인을 만드는 중입니다.
+수집 파이프라인 위에 이상탐지, 추천, 예측까지 얹은 상태입니다. 인프라는 4주차 이후 개인 노트북+ngrok에서 EC2 상시 운영으로 이전했습니다.
 
-| 항목 | AWS (A) | Azure (B) | GCP (C) |
-|------|---------|-----------|---------|
-| 자원 수집 (CPU/메모리/디스크/사양) | 완료 | 완료 | 완료 |
-| 비용 수집 (서비스별) | 완료 | 완료 | 완료 (billing export 지연 시 추정값 fallback) |
-| 공통 스키마 정렬 (decisions/0001) | 완료 (7/24 평균 방식으로 수정) | 완료 | 완료 (기준 스키마) |
-| 서버 전송 코드 | 해당 없음 (서버 자체를 담당) | 완료 | 완료 |
-| 실제 중앙 서버 연결 검증 | 로컬에서 자체 curl 테스트만 진행 | 미검증 (서버 미기동 시 연결 실패 처리까지만 확인) | **완료** — ngrok으로 원격 VM → 서버 → DB 저장까지 확인 |
-| 중앙 서버 (FastAPI + PostgreSQL) | Docker Compose로 로컬 구축·검증 완료 | — | — |
+| 항목 | 상태 |
+|------|------|
+| 자원/비용 수집 (AWS/Azure/GCP) | 완료 (5분/1일 주기 cron 자동화) |
+| 공통 스키마 정렬 (decisions/0001, 0002) | 완료 |
+| 중앙 서버 (FastAPI + PostgreSQL) | EC2 인스턴스에서 Docker Compose로 상시 운영 |
+| ML 이상탐지 (Isolation Forest, 클라우드별 모델) | 완료 |
+| 비용 최적화 추천 (downsize/keep) | 완료 |
+| Grafana 대시보드 | 운영 중 |
+| 미사용 리소스 탐지 (AWS 완료 / Azure GCP 각자 확인 필요) | AWS - collectors/aws_unused_detector.py, unused_resources 테이블 |
+| 예산 초과 Slack 알림 (AWS 완료 / Azure GCP 각자 확인 필요) | AWS - server/budget_alert.py |
+| 예약 인스턴스(RI) 전환 추천 (AWS 완료 / Azure GCP 각자 확인 필요) | AWS - ml/recommend.py에 commitment_recommendation 컬럼 추가 |
+| 비용 예측 (Prophet, AWS 완료 / Azure GCP 각자 확인 필요) | AWS - ml/cost_forecast.py, cost_forecast 테이블 |
 
-현재 중앙 서버는 A의 로컬 노트북에서 `docker compose`로 떠 있고, 팀원들은 ngrok 임시 터널로 접속해서 연결을 검증하는 단계입니다. 정식 클라우드 배포는 아직입니다.
+> Azure(B), GCP(C) 담당 항목의 최신 상태는 각자 업데이트 부탁드립니다 (10주차 기준 AWS만 확인 완료).
 
 ---
 
@@ -30,15 +34,28 @@ AWS / Azure / GCP 세 클라우드에 흩어진 자원 사용률과 비용 데�
 
 ```
 [AWS EC2]  --\
-[Azure VM] ---+--> collector (Python) --> to_common_record() --> HTTP POST --\
-[GCP VM]   --/                                                                v
-                                                          FastAPI 서버 (A 노트북, ngrok 경유)
-                                                                |
-                                                                v
-                                                     PostgreSQL (resource_metrics, cost_records)
+[Azure VM] ---+--> collector (Python, cron) --> to_common_record() --> HTTP POST --\
+[GCP VM]   --/                                                                      v
+                                                              FastAPI 서버 (EC2, Docker Compose)
+                                                                       |
+                                                                       v
+                                                     PostgreSQL (resource_metrics, cost_records,
+                                                        anomaly_results, recommendations,
+                                                        unused_resources, cost_forecast)
+                                                                       |
+                                        +------------------------------+------------------------------+
+                                        v                              v                              v
+                                  Grafana 대시보드              ml/ 배치 스크립트              server/notifier.py
+                                  (실측값 + 이상탐지            (anomaly_detector,                    |
+                                   오버레이 패널)                recommend, cost_forecast)             v
+                                                                       |                          Slack 알림
+                                                                       v                    (미사용 리소스 발견,
+                                                                 결과를 다시 DB에 저장             예산 초과)
 ```
 
-각 클라우드의 수집기(`collectors/*_exporter.py`)가 5분 간격 자원 지표와 하루 1회 비용 지표를 조회하고, 공통 스키마로 변환한 뒤 `requests.post()`로 중앙 서버 API(`/resources`, `/costs`)에 전송합니다. 서버는 Pydantic으로 형식을 검증하고 PostgreSQL에 저장합니다.
+각 클라우드의 수집기가 5분 간격 자원 지표와 하루 1회 비용 지표를 조회해 공통 스키마로 변환한 뒤 중앙 서버 API로 전송합니다. 서버는 EC2 인스턴스 위 Docker Compose로 PostgreSQL·Grafana와 함께 상시 운영됩니다.
+
+ml/ 아래 배치 스크립트들이 주기적으로(또는 수동 실행으로) DB를 읽어 이상탐지·추천·예측 결과를 다시 DB에 써넣고, unused_resources나 예산 초과 같은 즉시성 있는 이벤트는 server/notifier.py를 통해 Slack으로 알림이 갑니다.
 
 ---
 
