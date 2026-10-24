@@ -17,12 +17,18 @@ from notifier import send_slack_alert
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 DATABASE_URL = os.environ["DATABASE_URL"]
 
-# 클라우드별 월 예산 (USD) - 잠정값, 팀 확정 필요 (decisions/0011 참고)
-MONTHLY_BUDGET = {
-    "AWS": 50.0,
-    "Azure": 50.0,
-    "GCP": 50.0,
-}
+# 클라우드별 월 예산 (USD)은 .env의 BUDGET_AWS / BUDGET_AZURE / BUDGET_GCP에서 읽는다.
+# 설정하지 않은 클라우드는 예산 검사를 건너뛴다 (decisions/0011 참고, 0015 단계 1).
+
+
+def monthly_budget(cloud: str):
+    raw = os.environ.get(f"BUDGET_{cloud.upper()}", "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        raise SystemExit(f"[설정 오류] BUDGET_{cloud.upper()} 값이 숫자가 아닙니다: {raw!r}")
 
 
 async def check_budget(dry_run: bool = False):
@@ -39,8 +45,10 @@ async def check_budget(dry_run: bool = False):
 
     for row in rows:
         cloud, total = row['cloud'], row['total']
-        budget = MONTHLY_BUDGET.get(cloud)
-        if budget and total > budget:
+        budget = monthly_budget(cloud)
+        if budget is None:
+            print(f"[SKIP] {cloud} ${total:.2f} - 예산 미설정 (BUDGET_{cloud.upper()})")
+        elif total > budget:
             msg = f"{cloud} 이번 달 누적 비용 ${total:.2f}이 예산 ${budget:.2f}를 초과했습니다."
             print(f"[경고] {msg}")
             if not dry_run:

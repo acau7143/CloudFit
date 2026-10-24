@@ -122,6 +122,13 @@ CloudFit/
 
 ## 시작하기
 
+**0. 환경 설정** — `.env.example`을 복사해 `.env`로 만들고 값을 채운다. 계정·리전·인스턴스처럼
+환경마다 다른 값은 코드가 아니라 `.env`에서 읽으며, 필수 값이 빠지면 어떤 키가 빠졌는지 알려주고 종료한다.
+```bash
+cp .env.example .env
+```
+cron 설정은 `runbook/crontab-reference.md`, 전체 이식 계획은 `decisions/0015`를 참고.
+
 **1. 중앙 서버 + DB 실행**
 ```bash
 docker compose up --build

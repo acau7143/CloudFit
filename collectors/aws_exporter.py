@@ -11,18 +11,52 @@ AWS CloudWatch / Cost Explorer 기반 자원·비용 수집 모듈
     2) send_to_server(): health 확인 후 자원 1건 + 비용 N건 전송, 실패 건 이유 출력
     3) __main__: --dry-run이면 출력만, 플래그 없으면 실제 전송
 """
-import boto3
+import functools
 from datetime import datetime, timedelta, timezone
 
-REGION = "ap-northeast-2"
-cw = boto3.client("cloudwatch", region_name=REGION)
-ec2 = boto3.client("ec2", region_name=REGION)
+import boto3
 
+try:
+    from collectors import cloud_config
+except ImportError:  # 스크립트로 직접 실행하면 collectors/가 sys.path[0]
+    import cloud_config
+
+# 리전/인스턴스 ID/디스크 장치는 .env에서 읽는다 (cloud_config.py, .env.example 참고).
+# 클라이언트는 첫 사용 시점에 만든다 - import만으로는 설정이 필요하지 않게 하기 위해서.
+
+
+@functools.lru_cache(maxsize=None)
+def _client(service, region):
+    return boto3.client(service, region_name=region)
+
+
+def _cw():
+    return _client("cloudwatch", cloud_config.aws_region())
+
+
+def _ec2():
+    return _client("ec2", cloud_config.aws_region())
+
+
+# EC2 DescribeInstanceTypes 조회가 실패할 때(권한 없음 등)만 쓰는 폴백 표
 INSTANCE_SPECS = {
     "t3.micro": {"vcpu": 2, "ram_gb": 1},
     "t3.small": {"vcpu": 2, "ram_gb": 2},
     "t3.medium": {"vcpu": 2, "ram_gb": 4},
 }
+
+
+def get_instance_specs(instance_type):
+    """인스턴스 타입의 vCPU/RAM(GB)을 EC2 API로 조회한다. 실패하면 폴백 표, 거기도 없으면 {}."""
+    try:
+        info = _ec2().describe_instance_types(InstanceTypes=[instance_type])["InstanceTypes"][0]
+        return {
+            "vcpu": info["VCpuInfo"]["DefaultVCpus"],
+            "ram_gb": round(info["MemoryInfo"]["SizeInMiB"] / 1024, 2),
+        }
+    except Exception as e:  # ec2:DescribeInstanceTypes 권한이 없어도 수집은 계속돼야 함
+        print(f"[정보] 인스턴스 사양 API 조회 실패, 폴백 표 사용: {e}")
+        return INSTANCE_SPECS.get(instance_type, {})
 
 
 def _get_metric_average(namespace, metric_name, dimensions):
@@ -31,7 +65,7 @@ def _get_metric_average(namespace, metric_name, dimensions):
     GCP(팀장) 기준과 맞추기 위해, 마지막 5분 값 1개가 아니라
     구간 내 모든 datapoint의 평균을 낸다 (decisions/0001).
     """
-    response = cw.get_metric_statistics(
+    response = _cw().get_metric_statistics(
         Namespace=namespace,
         MetricName=metric_name,
         Dimensions=dimensions,
@@ -59,25 +93,25 @@ def collect_resource_metrics(instance_id):
     )
     disk = _get_metric_average(
         "CWAgent", "disk_used_percent",
-        [
-            {"Name": "InstanceId", "Value": instance_id},
-            {"Name": "path", "Value": "/"},
-            {"Name": "device", "Value": "nvme0n1p1"},
-            {"Name": "fstype", "Value": "xfs"},
-        ],
+        [{"Name": "InstanceId", "Value": instance_id}] + cloud_config.aws_disk_dimensions(),
     )
     return cpu, memory, disk
 
 
 def get_instance_type(instance_id):
     """인스턴스 타입을 조회한다."""
-    response = ec2.describe_instances(InstanceIds=[instance_id])
+    response = _ec2().describe_instances(InstanceIds=[instance_id])
     instance = response["Reservations"][0]["Instances"][0]
     return instance["InstanceType"]
 
 
-def to_common_record(instance_id, cpu, memory, disk, instance_type):
-    """자원 메트릭을 팀 공통 스키마(GCP 기준)로 변환한다."""
+def to_common_record(instance_id, cpu, memory, disk, instance_type, specs=None):
+    """자원 메트릭을 팀 공통 스키마(GCP 기준)로 변환한다.
+
+    specs: {"vcpu":.., "ram_gb":..}. 안 주면 폴백 표(INSTANCE_SPECS)로 찾는다.
+    """
+    if specs is None:
+        specs = INSTANCE_SPECS.get(instance_type, {})
     return {
         "cloud": "AWS",
         "instance_id": instance_id,
@@ -86,8 +120,8 @@ def to_common_record(instance_id, cpu, memory, disk, instance_type):
         "memory_avg": round(memory, 2) if memory is not None else None,
         "disk_avg": round(disk, 2) if disk is not None else None,
         "instance_type": instance_type,
-        "vcpu": INSTANCE_SPECS.get(instance_type, {}).get("vcpu"),
-        "ram_gb": INSTANCE_SPECS.get(instance_type, {}).get("ram_gb"),
+        "vcpu": specs.get("vcpu"),
+        "ram_gb": specs.get("ram_gb"),
         "cost_monthly": None,  # 자원 레코드엔 비용 직접 연결 안 함(별도 cost_records 사용)
     }
 
@@ -96,7 +130,8 @@ def collect_and_normalize(instance_id):
     """수집 + 사양 조회 + 공통 형식 변환을 한 번에 처리한다."""
     cpu, memory, disk = collect_resource_metrics(instance_id)
     instance_type = get_instance_type(instance_id)
-    return to_common_record(instance_id, cpu, memory, disk, instance_type)
+    specs = get_instance_specs(instance_type)
+    return to_common_record(instance_id, cpu, memory, disk, instance_type, specs)
 
 
 # ---------------------------------------------------------------------------
@@ -223,8 +258,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--instance-id",
-        default="i-05f7cdc5c5183e2ae",
-        help="자원 메트릭을 조회할 EC2 인스턴스 ID",
+        default=None,
+        help="자원 메트릭을 조회할 EC2 인스턴스 ID (생략하면 .env의 AWS_INSTANCE_ID)",
     )
     parser.add_argument(
         "--costs",
@@ -234,7 +269,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # 수집은 공통 (dry-run이든 실전송이든 한 번만)
-    record = collect_and_normalize(args.instance_id)
+    # 설정이 빠졌으면 수집을 시작하기 전에 빠진 키를 한 번에 안내하고 종료
+    needed = ["AWS_REGION"] + ([] if args.instance_id else ["AWS_INSTANCE_ID"])
+    cloud_config.exit_on_config_error(cloud_config.require_env, *needed)
+    instance_id = cloud_config.aws_instance_id(args.instance_id)
+    record = collect_and_normalize(instance_id)
     cost_records = collect_cost() if args.costs else []
 
     if args.dry_run:

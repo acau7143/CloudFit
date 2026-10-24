@@ -12,13 +12,17 @@ import json
 
 import boto3
 
+import cloud_config
 from server_client import post_unused_resource
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "server"))
 from notifier import send_slack_alert
 
-REGION = "ap-northeast-2"
-ec2 = boto3.client("ec2", region_name=REGION)
+
+def _ec2():
+    """첫 사용 시점에 클라이언트를 만든다 (리전은 .env의 AWS_REGION)."""
+    return boto3.client("ec2", region_name=cloud_config.aws_region())
+
 
 # 직전 실행의 탐지 결과를 저장해두는 로컬 상태 파일 (이 EC2 안에서만 유효)
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".aws_unused_state.json")
@@ -26,7 +30,7 @@ STATE_FILE = os.path.join(os.path.dirname(__file__), ".aws_unused_state.json")
 
 def detect_unused_volumes():
     """상태가 'available'(인스턴스 미연결)인 EBS 볼륨을 찾는다."""
-    resp = ec2.describe_volumes(
+    resp = _ec2().describe_volumes(
         Filters=[{"Name": "status", "Values": ["available"]}]
     )
     results = []
@@ -42,7 +46,7 @@ def detect_unused_volumes():
 
 def detect_unused_ips():
     """인스턴스에 연결되지 않은(AssociationId 없는) Elastic IP를 찾는다."""
-    resp = ec2.describe_addresses()
+    resp = _ec2().describe_addresses()
     results = []
     for addr in resp.get("Addresses", []):
         if "AssociationId" not in addr:
@@ -122,7 +126,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    result = detect_unused(dry_run=args.dry_run)
+    result = cloud_config.exit_on_config_error(detect_unused, dry_run=args.dry_run)
 
     if args.dry_run:
         print("=== UNUSED RESOURCES ===")
