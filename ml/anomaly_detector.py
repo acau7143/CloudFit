@@ -16,6 +16,24 @@ from server.notifier import send_slack_alert
 
 MAD_WINDOW_DAYS = 7
 MAD_THRESHOLD = 3.5
+MODEL_PATH = 'ml/model.pkl'  # ml/train.py 가 만든다. cron 은 프로젝트 루트에서 실행하므로 상대 경로
+
+
+def load_saved_models(path=None):
+    """학습된 모델 파일을 읽는다. 파일이 없으면 None 을 돌려준다.
+
+    새 환경에서는 ml/train.py 가 처음 실행되기 전까지 이 파일이 없다
+    (train.py 는 cron 으로 일요일 03:00 에 돌고 클라우드당 real 데이터가 20건 이상 있어야 학습한다).
+    그 동안 10분마다 FileNotFoundError 로 로그가 쌓이지 않도록 안내만 남기고 이번 실행은 건너뛴다.
+    """
+    path = path or MODEL_PATH
+    if not os.path.exists(path):
+        print(f"[INFO] 학습된 모델 파일이 아직 없습니다 ({path}). ml/train.py 가 먼저 실행돼야 합니다 "
+              "(cron: 일요일 03:00, 클라우드당 real 데이터 20건 이상 필요. 바로 만들려면: python ml/train.py) "
+              "- 이번 실행은 건너뜁니다")
+        return None
+    with open(path, 'rb') as f:
+        return pickle.load(f)
 
 
 def is_out_of_range(series, mean, std, min_std_ratio: float = 0.05):
@@ -85,8 +103,9 @@ async def was_anomalous_before(conn, cloud: str, instance_id: str, before_timest
 
 
 async def detect_and_save(full: bool = False):
-    with open('ml/model.pkl', 'rb') as f:
-        saved = pickle.load(f)
+    saved = load_saved_models()
+    if saved is None:
+        return  # 모델이 없으면 DB 에도 접속하지 않고 건너뛴다
 
     conn = await asyncpg.connect(DATABASE_URL)
 

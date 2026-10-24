@@ -26,6 +26,14 @@
 
 - 각 VM에 SSH 접속 가능, 저장소를 받을 수 있는 인터넷 (`git clone`)
 - 서버 VM: Docker (`docker compose` 또는 `docker-compose`)
+  - **Ubuntu 24.04 (2026-10-24 새 VM에서 검증)**: 아래를 한 번에 설치하고, Docker 권한 때문에 **SSH를 닫았다가 다시 접속**한다.
+    ```bash
+    sudo apt-get update && sudo apt-get install -y git docker.io docker-compose-v2 python3-venv curl
+    sudo usermod -aG docker $USER
+    ```
+    재접속 후 `docker ps`가 머리글만 출력하면(컨테이너 없음) 정상이다. `permission denied`면 재접속이 안 된 것이다.
+  - `Docker Compose is configured to build using Bake, but buildx isn't installed` 경고는 무해하다(이전 방식으로 빌드된다).
+  - 이미지를 받고 파이썬 패키지를 설치하느라 출력이 **매우 길고 10분 안팎** 걸린다 (e2-medium 기준). 끝에 `사전 점검: server`가 `OK 3 / WARN 0 / FAIL 0`이면 성공이다.
 - 수집 VM: Python 3.10 이상 권장 (3.9는 boto3 지원이 끝나 경고가 계속 나온다)
   - Amazon Linux: `sudo dnf install -y python3.11` / Ubuntu: `sudo apt install -y python3.11 python3.11-venv`
 - 수집 대상 VM은 **켜져 있어야** 한다 (꺼져 있으면 CPU 지표가 비어 점검이 실패한다)
@@ -40,7 +48,8 @@ cp .env.example .env
 ```
 
 `.env`의 **[서버/DB]** 섹션을 채운다 (`DB_PASSWORD`, `DATABASE_URL`, `GRAFANA_ADMIN_PASSWORD`, 필요하면 `SLACK_*`, `BUDGET_*`).
-`DATABASE_URL`의 비밀번호 부분은 `DB_PASSWORD`와 같은 값으로 쓴다.
+`DATABASE_URL`의 비밀번호 부분은 `DB_PASSWORD`와 같은 값으로 쓴다. 서버와 수집기를 **같은 VM**에 둘 때는 `SERVER_URL`을 비워 두거나
+`http://localhost:8000`으로 둔다 (`.env.example`의 `SERVER_URL` 예시는 주석 처리돼 있다).
 
 ```bash
 bash scripts/install_server.sh            # 컨테이너 기동 + 패키지 설치 + 점검 + cron 미리보기
@@ -186,7 +195,7 @@ curl -s "http://localhost:8000/resources?cloud=AWS" | head -c 600
 
 | 항목 | 필요한 데이터 |
 |---|---|
-| 이상탐지 | 최근 7일, 인스턴스당 20건 이상 (`ml/train.py`는 일요일 03:00에 학습) |
+| 이상탐지 | 학습된 모델(`ml/model.pkl`)이 있어야 한다. `ml/train.py`는 일요일 03:00에 돌고 클라우드당 real 데이터가 **20건 이상**(5분 주기로 약 2시간) 있어야 학습한다. **첫 학습 전에는 `anomaly_detector.py`가 "학습된 모델 파일이 아직 없습니다"라고 안내하고 건너뛴다** (오류가 아니다). 일요일을 기다리지 않으려면 데이터가 20건 쌓인 뒤 서버 VM에서 `.venv/bin/python ml/train.py`를 한 번 수동 실행한다 |
 | 비용 예측 | 7일치 이상의 비용 기록 |
 | 약정 전환 추천 | 위 데이터 + 서버 VM이 `allocation_rules`에 등록돼야 핵심 인프라로 취급됨 (`decisions/0013`) |
 
