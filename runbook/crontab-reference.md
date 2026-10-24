@@ -14,6 +14,7 @@
 ## AWS EC2 — 서버 VM이자 수집·ML 배치 실행 VM
 
 사용자 `ec2-user`, 시스템 `python3` 사용. 중앙 서버(Docker Compose)가 같은 VM에서 돈다.
+이 VM의 Python은 3.9라 boto3의 "Python 3.9 지원 종료" 경고가 cron 로그에 매번 남는다 (동작에는 영향 없음).
 
 ```cron
 */5 * * * * cd /home/ec2-user/CloudFit && python3 collectors/aws_exporter.py >> logs/aws_resource.log 2>&1
@@ -46,12 +47,16 @@
 ```cron
 */5 * * * * cd /home/user/CloudFit && /home/user/finops-env/bin/python3 collectors/gcp_exporter.py >> logs/gcp_resource.log 2>&1
 0 9 * * * cd /home/user/CloudFit && /home/user/finops-env/bin/python3 collectors/gcp_exporter.py --costs >> logs/gcp_cost.log 2>&1
-15 9 * * * cd ~/CloudFit && python3 collectors/gcp_unused_detector.py >> logs/unused_resource.log 2>&1
+15 9 * * * cd ~/CloudFit && /home/user/finops-env/bin/python3 collectors/gcp_unused_detector.py >> logs/unused_resource.log 2>&1
 ```
+
+수정 이력:
+
+- 2026-10-24: 세 번째 줄(미사용 탐지)이 가상환경이 아닌 시스템 `python3`로 실행돼 `ModuleNotFoundError: dotenv`로
+  실패하고 있었다. 가상환경 파이썬으로 교체했다 (위 crontab은 교체 후 상태). 설치 스크립트도 가상환경 파이썬으로 통일해야 한다.
 
 알려진 불일치:
 
-- 세 번째 줄만 가상환경이 아닌 시스템 `python3`를 쓴다. 설치 스크립트에서는 가상환경 파이썬으로 통일해야 한다.
 - `gcp_exporter.py`는 `--costs` 인자를 파싱하지 않는다 (`--dry-run`만 확인). 그래서 5분 주기 실행과
   매일 09:00 실행이 **같은 동작**(자원 + 비용 수집·전송)을 한다. 비용 조회(BigQuery)가 5분마다 실행되는 셈이다.
   동작을 바꿀지 여부는 별도로 결정한다.

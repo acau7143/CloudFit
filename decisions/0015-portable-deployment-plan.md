@@ -128,6 +128,7 @@
 | 2-5 Azure 수집기 설치 | Azure Monitor Agent + DCR/Log Analytics 연결 절차를 `az` CLI 스크립트로 축약(현재 runbook 약 1,950줄 → 핵심 절차만). 서비스 프린시펄 생성 절차 포함 |
 | 2-6 사전 점검 스크립트 | `scripts/check_prereqs.py`: 자격증명 유효, 대상 VM 조회 가능, 에이전트 지표(메모리·디스크) 존재, 서버 `/health` 도달 여부를 항목별 OK/FAIL로 출력 |
 | 2-7 최소 권한 문서 | 코드가 실제 호출하는 API 기준으로 IAM 정책/역할 목록 확정. 후보(구현 시 코드로 재검증): AWS `cloudwatch:GetMetricStatistics`, `ec2:Describe*`, `ce:GetCostAndUsage`, `pricing:GetProducts` / Azure `Monitoring Reader`, `Reader`, `Cost Management Reader`, Log Analytics 읽기 / GCP `monitoring.viewer`, `compute.viewer`, BigQuery 조회·작업 권한 |
+| 2-9 Python 버전 | AWS EC2의 Python이 3.9라 boto3 지원 종료(2026-04-29) 경고가 cron 로그에 매번 쌓이고 있음. README 전제(3.11+)에 맞춰 설치 스크립트가 3.11 이상 가상환경을 만들게 한다 |
 | 2-8 runbook 통합 | `runbook/new-environment-setup.md` 하나로 "서버 → 클라우드별 수집기 → 검증" 순서의 처음부터 끝까지 절차 작성. 기존 runbook은 상세 참고용으로 링크 |
 
 **완료 기준**
@@ -212,14 +213,17 @@
   - [ ] Azure VM crontab·`.env` 키 (B 담당, 대기 중)
   - [x] GCP `google-cloud-compute` 버전 확보 (1.52.0, `gcp_unused_detector.py`가 import)
   - [ ] 범위 확정(열린 질문 1·2), `decisions/` 번호 중복 정리
+  - [x] 발견·수정: GCP 미사용 탐지 cron이 시스템 `python3`로 실행돼 `ModuleNotFoundError: dotenv`로 실패하고 있었음 → 가상환경 파이썬으로 교체 (2026-10-24, `--dry-run` 정상). 내일 09:15 이후 `logs/unused_resource.log`로 최종 확인
   - 확인 필요: AWS `.env`에는 `GRAFANA_ADMIN_PASSWORD`가 있지만 저장소의 `docker-compose.yml`은 Grafana 비밀번호를 `admin`으로 고정하고 있다. EC2의 compose 파일이 저장소와 다르게 수정돼 있을 수 있다 (`git status`로 확인). 단계 3에서 정리.
-- [~] 단계 1: 설정 분리, `.env.example`, 필수 키 검증, 테스트 수정 — **AWS·GCP·예산 구현됨(브랜치 `feature/portable-config`, 미병합), Azure는 이미 환경변수 방식이라 `.env.example`에만 반영**
+- [~] 단계 1: 설정 분리, `.env.example`, 필수 키 검증, 테스트 수정 — **AWS·GCP·예산 구현·병합 완료(PR #7), AWS EC2·GCP VM 실환경 검증 완료(2026-10-24). 남은 것은 Azure 점검.** Azure는 이미 환경변수 방식이라 `.env.example`에만 반영
   - [x] `collectors/cloud_config.py` (필수 키 일괄 검증, 종료 코드 2), `.env.example`
   - [x] AWS: `AWS_REGION`, `AWS_INSTANCE_ID`, 디스크 Dimension(`AWS_DISK_DEVICE`/`AWS_DISK_FSTYPE`; `fstype=xfs`도 하드코딩이었음), 인스턴스 사양 API 조회(폴백 표 유지, `ec2:DescribeInstanceTypes` 권한 추가 필요)
   - [x] GCP: `GCP_PROJECT_ID`/`GCP_ZONE`/`GCP_INSTANCE_NAME`/`GCP_BILLING_ACCOUNT_ID`, `GCP_DISK_DEVICE`, 머신 사양 API 조회(폴백 표 유지, `compute.machineTypes.get` 권한 추가 필요)
   - [x] 예산: `BUDGET_AWS`/`BUDGET_AZURE`/`BUDGET_GCP` (미설정 시 건너뜀. 기존에는 클라우드별 50달러 고정이었으므로 **운영 서버 `.env`에 `BUDGET_*=50`을 넣어야 기존 동작 유지**)
   - [x] 테스트 16개 추가. 기존 Azure 테스트 5개 실패는 `main`에도 있던 것(이 작업과 무관)
-  - [ ] 운영 VM `.env`에 새 키 선반영 → 그 후 병합 (공통 원칙 2)
+  - [x] 운영 VM `.env`에 새 키 선반영 → 그 후 병합 (공통 원칙 2). AWS EC2·GCP VM 모두 선반영 후 PR #7 병합
+  - [x] 실환경 검증 (2026-10-24): 두 VM에서 `--dry-run` 정상. `ram_gb`가 `1`에서 `1.0`으로 바뀐 것으로 사양 API 조회 경로와 `.env` 설정 읽기를 확인
+  - [ ] 수집 cron이 새 코드로 계속 도는지 `logs/aws_resource.log`, `logs/gcp_resource.log`로 확인
   - [x] `google-cloud-compute==1.52.0` 반영
   - [ ] Azure 수집기 점검
 - [ ] 단계 2: 설치 스크립트, cron 코드화, 사전 점검, 권한 문서, 통합 runbook
