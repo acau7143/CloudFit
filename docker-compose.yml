@@ -4,7 +4,7 @@ services:
     container_name: finops_db
     environment:
       POSTGRES_USER: finops
-      POSTGRES_PASSWORD: finops123
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: finops_db
     ports:
       - "5432:5432"
@@ -23,10 +23,24 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql://finops:finops123@db:5432/finops_db
+      DATABASE_URL: postgresql://finops:${DB_PASSWORD}@db:5432/finops_db
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET}
     depends_on:
       db:
         condition: service_healthy
+  grafana:
+    image: grafana/grafana:latest
+    container_name: finops_grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - grafana_data:/var/lib/grafana
 
 volumes:
-  postgres_data:
+    postgres_data:
+    grafana_data:   

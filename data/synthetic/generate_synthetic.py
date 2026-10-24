@@ -13,9 +13,12 @@ import asyncpg
 import asyncio
 import random
 import os
+from pathlib import Path
+from dotenv import load_dotenv
 from datetime import datetime, timedelta
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://finops:finops123@localhost:5432/finops_db")
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 # 생성할 클라우드 / 인스턴스 목록 (5개 패턴을 6개 인스턴스에 하나씩 배정)
 INSTANCES = [

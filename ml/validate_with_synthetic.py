@@ -1,9 +1,13 @@
+import os
 import pickle
 import pandas as pd
 import asyncpg
 import asyncio
+from pathlib import Path
+from dotenv import load_dotenv
 
-DATABASE_URL = "postgresql://finops:finops123@localhost:5432/finops_db"
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 
 async def fetch_synthetic_data():
