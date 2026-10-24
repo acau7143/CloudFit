@@ -270,8 +270,8 @@
   - [x] 2-8 `runbook/new-environment-setup.md`
   - [x] 2-9 Python 3.10+ 가상환경 (`find_python`, 없으면 경고 후 python3)
   - [ ] 새 환경(클린룸)에서 실제 실행 검증 — 로컬에서는 쉘 문법, 가짜 crontab으로 등록 로직, 점검 판정 테스트까지만 확인함
-  - [x] Azure 실제 crontab 반영 (2026-10-24, 매일 오류로 끝나는 `--costs` 줄은 템플릿에서 제외)
-  - [ ] Azure 미사용 탐지 로그(`logs/unused_resource.log`) 확인 — 시스템 `python3`로 도는 구성이라 GCP처럼 패키지 누락 가능성 점검
-  - [ ] 후속 결정: GCP·Azure 수집기가 실행할 때마다 비용까지 수집·전송함(`--costs` 미지원, Azure는 매일 `--costs` 줄이 오류). 자원 전용 모드/`--costs` 인자 도입 여부
+  - [x] Azure 실제 crontab 반영 (2026-10-24 SSH 확인). 템플릿은 운영과 같은 3줄(5분 자원 / 매일 `--costs` / 미사용 탐지)
+  - [x] Azure 미사용 탐지 로그 확인 (2026-10-24): 시스템 `python3`로 정상 동작("미사용 리소스 후보가 없습니다"). GCP와 달리 패키지 누락 없음
+  - [x] `--costs` 분리 구현 (브랜치 `fix/azure-exporter-tests`, PR 대기): GCP·Azure 수집기도 AWS처럼 `--costs`가 없으면 자원만, 있으면 비용까지 전송. 비용 API가 5분마다 호출되던 것과 Azure의 매일 `--costs` 오류가 해소됨. 운영 crontab 변경 불필요, 각 VM에서 `git pull`만 하면 됨
 - [ ] 단계 3: API 인증, DB 포트 제한, Grafana 프로비저닝, 시드, CI
 - [ ] 단계 4: 새 계정 클린룸 검증 (AWS / Azure / GCP / 서버)

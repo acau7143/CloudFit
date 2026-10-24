@@ -135,8 +135,9 @@ bash scripts/install_collector.sh gcp --apply
 ## 5. 수집 VM — Azure
 
 > Azure cron 템플릿(`scripts/cron/collector-azure.cron`)은 Azure VM의 운영 crontab(2026-10-24 확인) 기준이다.
-> 운영의 "매일 09:00 `--costs`" 줄은 `azure_exporter.py`가 그 인자를 받지 않아 매일 오류로 끝나므로 템플릿에서 뺐다.
-> `azure_exporter.py`는 실행할 때마다(5분) 비용 API도 호출하므로 호출 한도(429, `incidents/INC-001`)에 주의한다.
+> 자원은 5분마다, 비용은 매일 09:00(UTC)에 `--costs`로 한 번만 수집한다. Cost Management API는 스코프당 분당 4회
+> 제한이 있어(`incidents/INC-001`) 5분 줄에 `--costs`를 붙이면 안 된다. `--costs` 분리가 반영되지 않은 오래된 코드에서는
+> 이 줄이 오류로 끝나니, 설치 전에 `git pull`로 최신 `main`을 받는다.
 
 **5-1. 서비스 프린시펄과 권한** (상세: `azure-collector-setup-1~3.md`)
 
@@ -206,7 +207,7 @@ curl -s "http://localhost:8000/resources?cloud=AWS" | head -c 600
 | 수집기가 서버에 못 보냄 | 서버 VM 보안그룹의 8000 포트, `.env`의 `SERVER_URL` |
 | 디스크 지표만 비어 있음 | AWS: `AWS_DISK_DEVICE`/`AWS_DISK_FSTYPE`, GCP: `GCP_DISK_DEVICE`(Ops Agent의 device 라벨) |
 | GCP 메모리/디스크가 비어 있음 | Ops Agent 로그의 `API Check: FAIL` → 서비스 계정에 `metricWriter`/`logWriter` 추가 후 `sudo systemctl restart google-cloud-ops-agent` |
-| Azure 비용 조회가 429 | 비용 API 호출 한도. 호출 주기를 줄인다 (`incidents/INC-001`) |
+| Azure 비용 조회가 429 | 비용 API 호출 한도(스코프당 분당 4회). 비용은 `--costs`(하루 한 번)로만 호출하고 5분 줄에는 붙이지 않는다 (`incidents/INC-001`) |
 | 스키마를 고쳤는데 DB에 반영 안 됨 | `db/schema.sql`은 DB 볼륨이 비어 있는 최초 기동에만 실행된다 (`server-setup.md` 4번) |
 
 ## 9. 되돌리기와 정리
@@ -220,4 +221,4 @@ curl -s "http://localhost:8000/resources?cloud=AWS" | head -c 600
 - `docker-compose.yml`의 Grafana 관리자 비밀번호가 `admin`으로 고정돼 있다 (`.env`의 `GRAFANA_ADMIN_PASSWORD`는 아직 반영되지 않음). 첫 로그인 후 바로 바꾼다.
 - DB 포트(5432)가 모든 인터페이스에 열려 있다 → 보안그룹에서 막는다.
 - 클라우드당 수집 VM 1대 전제다.
-- Azure 수집기는 5분마다 비용 API도 호출한다 (5번 참고).
+- 비용 수집은 `--costs`(하루 한 번)에서만 한다. 이 분리가 없는 오래된 코드는 5분 실행도 비용을 보낸다.
