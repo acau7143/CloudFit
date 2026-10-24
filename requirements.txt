@@ -27,9 +27,10 @@ scikit-learn==1.6.1
 typing_extensions==4.16.0
 urllib3==2.7.0
 
-# --- GCP 쪽 패키지: 이 EC2엔 GCP 수집기가 안 돌아서 실측 버전 확인 불가 ---
-# --- 성민(C)이 본인 GCP 환경에서 버전 확인 후 주석 풀고 채워야 함 ---
-# google-cloud-monitoring
-# google-cloud-bigquery
-# google-api-python-client
+# --- GCP 수집기 (GCP VM의 pip freeze 실측 버전) ---
+google-api-python-client==2.198.0
+google-cloud-bigquery==3.42.2
+google-cloud-monitoring==2.31.0
+# TODO(C): gcp_unused_detector.py가 쓰는 google-cloud-compute 버전은 GCP VM에서 확인 후 추가
+#   ~/finops-env/bin/pip freeze | grep -i google-cloud-compute
 python-multipart
