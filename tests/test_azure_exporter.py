@@ -9,45 +9,49 @@ from collectors.azure_exporter import (
 
 class TestAzureExporter(unittest.TestCase):
 
+    COMMON_KEYS = {
+        "cloud", "instance_id", "timestamp", "cpu_avg", "memory_avg", "disk_avg",
+        "instance_type", "vcpu", "ram_gb", "cost_monthly",
+    }
+
+    def _raw(self, **overrides):
+        """collect_resource_metrics()가 돌려주는 형태 (팀 공통 스키마, 2026-07-25 이후)."""
+        raw = {
+            "cloud": "Azure",
+            "instance_id": "vm-finops-azure-test",
+            "timestamp": "2026-07-07T10:19:00Z",
+            "cpu_avg": 0.525,
+            "memory_avg": 48.29,
+            "disk_avg": 10.7,
+            "instance_type": "Standard_B2ats_v2",
+            "vcpu": 2,
+            "ram_gb": 1.0,
+            "cost_monthly": None,
+        }
+        raw.update(overrides)
+        return raw
+
     def test_to_common_record_full_fields(self):
         """
         모든 필드가 공통 레코드에 정상적으로 전달되는지 확인한다.
         """
 
-        raw = {
-            "cloud": "azure",
-            "resource_id": "vm-finops-azure-test",
-            "resource_type": "vm",
-            "region": "koreacentral",
-            "metric_name": "Percentage CPU",
-            "timestamp": "2026-07-07T10:19:00Z",
-            "cpu_percent": 0.525,
-            "memory_percent": 48.29,
-            "disk_percent": 10.7,
-            "instance_type": "Standard_B2ats_v2",
-            "vcpu": 2,
-            "ram_gb": 1.0,
-            "cost_monthly": None,
-            "source": "actual",
-        }
+        record = to_common_record(self._raw())
 
-        record = to_common_record(raw)
+        self.assertEqual(set(record), self.COMMON_KEYS)
+        self.assertEqual(record["cloud"], "Azure")
+        self.assertEqual(record["instance_id"], "vm-finops-azure-test")
+        self.assertEqual(record["timestamp"], "2026-07-07T10:19:00Z")
 
-        self.assertEqual(record["cloud"], "azure")
-        self.assertEqual(record["resource_id"], "vm-finops-azure-test")
-        self.assertEqual(record["resource_type"], "vm")
-        self.assertEqual(record["region"], "koreacentral")
-
-        self.assertEqual(record["cpu_percent"], 0.525)
-        self.assertEqual(record["memory_percent"], 48.29)
-        self.assertEqual(record["disk_percent"], 10.7)
+        self.assertEqual(record["cpu_avg"], 0.525)
+        self.assertEqual(record["memory_avg"], 48.29)
+        self.assertEqual(record["disk_avg"], 10.7)
 
         self.assertEqual(record["instance_type"], "Standard_B2ats_v2")
         self.assertEqual(record["vcpu"], 2)
         self.assertEqual(record["ram_gb"], 1.0)
 
         self.assertIsNone(record["cost_monthly"])
-        self.assertEqual(record["source"], "actual")
 
 
     def test_to_common_record_handles_none_metrics(self):
@@ -55,28 +59,12 @@ class TestAzureExporter(unittest.TestCase):
         메모리와 디스크 값이 없어도 None 상태로 정상 변환되는지 확인한다.
         """
 
-        raw = {
-            "cloud": "azure",
-            "resource_id": "vm-test",
-            "resource_type": "vm",
-            "region": "koreacentral",
-            "metric_name": "Percentage CPU",
-            "timestamp": "2026-07-07T10:19:00Z",
-            "cpu_percent": 20.0,
-            "memory_percent": None,
-            "disk_percent": None,
-            "instance_type": "Standard_B1s",
-            "vcpu": 1,
-            "ram_gb": 1.0,
-            "cost_monthly": None,
-            "source": "actual",
-        }
+        record = to_common_record(self._raw(cpu_avg=20.0, memory_avg=None, disk_avg=None))
 
-        record = to_common_record(raw)
-
-        self.assertEqual(record["cloud"], "azure")
-        self.assertIsNone(record["memory_percent"])
-        self.assertIsNone(record["disk_percent"])
+        self.assertEqual(record["cloud"], "Azure")
+        self.assertEqual(record["cpu_avg"], 20.0)
+        self.assertIsNone(record["memory_avg"])
+        self.assertIsNone(record["disk_avg"])
         self.assertIsNone(record["cost_monthly"])
 
 
@@ -86,56 +74,28 @@ class TestAzureExporter(unittest.TestCase):
         실제 숫자 0.0으로 유지되는지 확인한다.
         """
 
-        raw = {
-            "cloud": "azure",
-            "resource_id": "vm-test",
-            "resource_type": "vm",
-            "region": "koreacentral",
-            "metric_name": "Percentage CPU",
-            "timestamp": "2026-07-07T10:19:00Z",
-            "cpu_percent": 0.0,
-            "memory_percent": 0.0,
-            "disk_percent": 0.0,
-            "instance_type": "Standard_B1s",
-            "vcpu": 1,
-            "ram_gb": 1.0,
-            "cost_monthly": None,
-            "source": "actual",
-        }
+        record = to_common_record(self._raw(cpu_avg=0.0, memory_avg=0.0, disk_avg=0.0))
 
-        record = to_common_record(raw)
-
-        self.assertEqual(record["cpu_percent"], 0.0)
-        self.assertEqual(record["memory_percent"], 0.0)
-        self.assertEqual(record["disk_percent"], 0.0)
+        self.assertEqual(record["cpu_avg"], 0.0)
+        self.assertEqual(record["memory_avg"], 0.0)
+        self.assertEqual(record["disk_avg"], 0.0)
+        self.assertIsNotNone(record["cpu_avg"])
 
 
-    def test_internal_metric_name_is_removed(self):
+    def test_internal_fields_are_removed(self):
         """
-        Azure 내부 처리용 metric_name이
+        Azure 내부 처리용 필드(metric_name, region 등)가
         공통 레코드에는 포함되지 않는지 확인한다.
         """
 
-        raw = {
-            "cloud": "azure",
-            "resource_id": "vm-test",
-            "resource_type": "vm",
-            "region": "koreacentral",
-            "metric_name": "Percentage CPU",
-            "timestamp": "2026-07-07T10:19:00Z",
-            "cpu_percent": 10.0,
-            "memory_percent": 40.0,
-            "disk_percent": 20.0,
-            "instance_type": "Standard_B1s",
-            "vcpu": 1,
-            "ram_gb": 1.0,
-            "cost_monthly": None,
-            "source": "actual",
-        }
+        raw = self._raw(metric_name="Percentage CPU", region="koreacentral", resource_type="vm")
 
         record = to_common_record(raw)
 
         self.assertNotIn("metric_name", record)
+        self.assertNotIn("region", record)
+        self.assertNotIn("resource_type", record)
+        self.assertEqual(set(record), self.COMMON_KEYS)
 
 
     def test_to_usd_from_krw(self):
@@ -184,7 +144,7 @@ class TestAzureExporter(unittest.TestCase):
 
         record = to_common_cost_record(row)
 
-        self.assertEqual(record["cloud"], "azure")
+        self.assertEqual(record["cloud"], "Azure")
         self.assertEqual(record["date"], "2026-07-07")
         self.assertEqual(record["cost_usd"], 1.0)
         self.assertEqual(record["currency"], "USD")

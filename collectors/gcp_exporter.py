@@ -1,3 +1,4 @@
+import argparse
 import os
 import sys
 import time
@@ -280,31 +281,43 @@ def send_cost_to_server(record: dict) -> bool:
         return False
 
 
-if __name__ == "__main__":
-    dry_run = "--dry-run" in sys.argv
+def main(argv=None):
+    """자원은 매번, 비용은 --costs 일 때만 수집·전송한다 (자원 5분 / 비용 하루 한 번, decisions/0003).
 
-    # 설정이 빠졌으면 수집을 시작하기 전에 빠진 키를 한 번에 안내하고 종료
-    settings = cloud_config.exit_on_config_error(
-        cloud_config.require_env,
-        "GCP_PROJECT_ID", "GCP_ZONE", "GCP_INSTANCE_NAME", "GCP_BILLING_ACCOUNT_ID",
+    --dry-run 은 서버로 보내지 않고 자원과 비용을 모두 조회해서 출력한다.
+    """
+    parser = argparse.ArgumentParser(description="GCP 자원/비용 수집기")
+    parser.add_argument("--dry-run", action="store_true", help="서버 전송 없이 자원과 비용을 조회해서 출력한다.")
+    parser.add_argument(
+        "--costs",
+        action="store_true",
+        help="비용(BigQuery billing export)도 함께 수집·전송한다. 지정하지 않으면 자원 메트릭만 전송한다.",
     )
-    PROJECT_ID = settings["GCP_PROJECT_ID"]
-    ZONE = settings["GCP_ZONE"]
-    INSTANCE_NAME = settings["GCP_INSTANCE_NAME"]
-    BILLING_ACCOUNT_ID = settings["GCP_BILLING_ACCOUNT_ID"]
+    args = parser.parse_args(argv)
+    want_costs = args.dry_run or args.costs
 
-    cpu_records = collect_cpu(PROJECT_ID)
-    memory_records = collect_memory(PROJECT_ID)
-    disk_records = collect_disk(PROJECT_ID)
-    machine_type = get_instance_spec(PROJECT_ID, ZONE, INSTANCE_NAME)
-    specs = get_machine_specs(PROJECT_ID, ZONE, machine_type)
+    # 설정이 빠졌으면 수집을 시작하기 전에 빠진 키를 한 번에 안내하고 종료.
+    # 청구 계정 ID 는 비용을 조회할 때만 필요하다.
+    keys = ["GCP_PROJECT_ID", "GCP_ZONE", "GCP_INSTANCE_NAME"] + (["GCP_BILLING_ACCOUNT_ID"] if want_costs else [])
+    settings = cloud_config.exit_on_config_error(cloud_config.require_env, *keys)
+    project_id = settings["GCP_PROJECT_ID"]
+    zone = settings["GCP_ZONE"]
+    instance_name = settings["GCP_INSTANCE_NAME"]
+
+    cpu_records = collect_cpu(project_id)
+    memory_records = collect_memory(project_id)
+    disk_records = collect_disk(project_id)
+    machine_type = get_instance_spec(project_id, zone, instance_name)
+    specs = get_machine_specs(project_id, zone, machine_type)
 
     instance_id = cpu_records[0]["instance_id"] if cpu_records else "unknown"
     record = to_common_record(instance_id, cpu_records, memory_records, disk_records, machine_type, specs)
 
-    cost_records = collect_cost(PROJECT_ID, BILLING_ACCOUNT_ID, machine_type=machine_type)
+    cost_records = []
+    if want_costs:
+        cost_records = collect_cost(project_id, settings["GCP_BILLING_ACCOUNT_ID"], machine_type=machine_type)
 
-    if dry_run:
+    if args.dry_run:
         print(record)
         print("=== 비용 데이터 수집 테스트 ===")
         for r in cost_records:
@@ -313,3 +326,7 @@ if __name__ == "__main__":
         send_resource_to_server(record)
         for r in cost_records:
             send_cost_to_server(r)
+
+
+if __name__ == "__main__":
+    main()
