@@ -57,6 +57,9 @@ sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=$P|; s|^DATABASE_URL=.*|DATABASE_URL=postg
 bash scripts/install_server.sh 2>&1 | tee ~/install_server.log
 ```
 
+Grafana는 자동으로 설정된다. `http://<서버>:3000`에 `admin` / `.env`의 `GRAFANA_ADMIN_PASSWORD`로 로그인하면 CloudFit 폴더에 대시보드가 있다.
+(3000 포트는 본인 IP에만 연다. 이미 수동으로 Grafana를 설정해 둔 서버에서는 `bash scripts/install_server.sh --no-grafana-provision` — `new-environment-setup.md` 2번 참고)
+
 **1-4. cron 등록** (이미 수동으로 등록한 cron이 있는 VM에서는 하지 않는다)
 
 ```bash
@@ -227,5 +230,6 @@ gcloud compute instances delete <테스트 VM 이름> --zone=asia-northeast3-a
 | 서버 설치 1-1 ~ 1-5 | 새 GCP VM(Ubuntu 24.04, e2-medium)에서 실행해 확인 |
 | 사전 점검 스크립트 | 운영 VM 3곳(AWS·GCP·Azure)에서 확인 |
 | GCP 수집기 | 새 GCP VM(기본 서비스 계정, 역할 6개)에서 실행해 확인: 사전 점검 OK 8 / WARN 0 / FAIL 0, cron 등록, 수동 실행 시 자원만 저장(`--costs`를 주면 비용까지 저장), 서버 DB에 이 VM의 instance id로 저장됨, cron의 첫 5분 주기가 스스로 실행되어 로그에 저장 성공이 남음 |
+| Grafana 자동 설정 | 새 GCP VM(Grafana 13.1.8)에서 설치 스크립트로 확인: `.env` 비밀번호로 로그인(`admin`/`admin`은 거부), 데이터소스 연결 정상, CloudFit 폴더에 대시보드 자동 등록, 테스트 데이터로 패널 8개가 모두 그려짐(화면 캡처로 확인). 재실행해도 정상. **이미 수동 설정된 Grafana에 같은 uid·다른 이름의 데이터소스가 있으면 시작 실패**를 재현해 별도 파일로 분리함 |
 | 서버 cron 등록 (1-4) | 같은 VM에서 서버 cron과 수집기 cron이 한 crontab에 함께 등록됨(블록 2개) |
 | AWS·Azure 수집기 | 새 VM에서는 아직 실행하지 않음. 이 문서의 AWS·Azure 명령은 운영 설정과 각 클라우드 공식 문서를 기준으로 작성 |

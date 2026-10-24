@@ -61,9 +61,19 @@ bash scripts/install_server.sh --apply    # 점검이 통과하면 ML 배치 cro
 - 방화벽/보안그룹에서 **8000 포트를 수집 VM의 IP에만** 연다. Grafana(3000)는 본인 IP에만 연다.
 - 확인: `curl http://localhost:8000/health` → `{"status":"ok"}`
 
-**Grafana 연결** (처음 한 번): `http://<서버>:3000` 로그인 → 데이터소스에 PostgreSQL 추가
-(호스트 `db:5432`, DB `finops_db`, 사용자 `finops`, 비밀번호 `DB_PASSWORD` 값) → `dashboard/dashboard.json` 가져오기.
-패널이 비어 있으면 각 패널의 데이터소스가 새 PostgreSQL로 잡혔는지 확인한다.
+**Grafana** (자동 설정): `install_server.sh`가 `docker-compose.grafana.yml`을 함께 써서 **PostgreSQL 데이터소스와 대시보드를 자동으로 만든다.**
+`http://<서버>:3000`에 `admin` / `.env`의 `GRAFANA_ADMIN_PASSWORD`로 로그인하면 **CloudFit 폴더**에 "멀티클라우드 리소스 모니터링"이 이미 있다
+(2026-10-24 새 VM에서 확인: 데이터소스 연결 정상, 패널 8개에 데이터 표시).
+
+- 관리자 비밀번호는 **처음 기동할 때만** 적용된다. 이미 만들어진 `grafana_data` 볼륨이 있으면 `.env`를 바꿔도 그대로이므로 화면(프로필)에서 바꾼다. `.env` 값이 비어 있으면 `admin`이다.
+- 데이터소스는 uid `dfu9a7kvokcg0c`로 고정돼 있다 (`grafana/provisioning/datasources/postgres.yaml`). 패널이 이 uid로 데이터소스를 찾기 때문에 바꾸면 패널이 비어 보인다.
+- 자동 설정된 데이터소스·대시보드는 화면에서 수정·삭제할 수 없다(읽기 전용). 대시보드를 고치려면 화면에서 만든 사본을 JSON으로 내보낸 뒤 `dashboard/dashboard.json`을 바꾼다.
+  이때 v2 형식 파일의 `metadata`는 `name` 하나만 남겨야 한다 (버전 번호, 작성자, 생성 시각 등이 있으면 파일 프로비저닝이 실패한다). 변경은 60초 안에 반영된다.
+- Grafana 이미지는 13.1.8로 고정했다 (대시보드가 v2 형식이라 버전에 따라 파일 프로비저닝 지원이 다르다).
+
+**이미 수동으로 Grafana를 설정해 둔 서버(운영 AWS 서버 등)에서는 주의한다.** 같은 uid(`dfu9a7kvokcg0c`)의 데이터소스가 **다른 이름**으로 이미 있으면 Grafana가 `data source with the same uid already exists` 오류로 **시작하지 못한다**(실제 재현).
+이 자동 설정은 별도 파일(`docker-compose.grafana.yml`)이라 `docker compose up -d`만 하는 기존 방식은 영향을 받지 않는다. 설치 스크립트로 이런 서버를 다시 올릴 때는 `bash scripts/install_server.sh --no-grafana-provision`을 쓴다.
+같은 uid의 데이터소스가 같은 이름(`grafana-postgresql-datasource`)으로 있을 때는 시작은 되지만, 기존 대시보드와의 충돌은 신뢰할 만하게 시험하지 못했다.
 
 ## 3. 수집 VM — AWS
 
@@ -240,6 +250,8 @@ curl -s "http://localhost:8000/resources?cloud=AWS" | head -c 600
 | 디스크 지표만 비어 있음 | AWS: `AWS_DISK_DEVICE`/`AWS_DISK_FSTYPE`, GCP: `GCP_DISK_DEVICE`(Ops Agent의 device 라벨) |
 | GCP 메모리/디스크가 비어 있음 | Ops Agent 로그의 `API Check: FAIL` → 서비스 계정에 `metricWriter`/`logWriter` 추가 후 `sudo systemctl restart google-cloud-ops-agent` |
 | Azure 비용 조회가 429 | 비용 API 호출 한도(스코프당 분당 4회). 비용은 `--costs`(하루 한 번)로만 호출하고 5분 줄에는 붙이지 않는다 (`incidents/INC-001`) |
+| Grafana 컨테이너가 계속 종료됨, 로그에 `data source with the same uid already exists` | 이미 수동으로 만든 같은 uid의 데이터소스가 다른 이름으로 있다. `--no-grafana-provision`으로 자동 설정 없이 올리거나, 화면에서 그 데이터소스 이름을 `grafana-postgresql-datasource`로 맞춘다 |
+| 대시보드 패널이 모두 비어 있음 | 데이터소스 uid가 `dfu9a7kvokcg0c`인지 확인한다 (Connections → Data sources). 아직 수집 데이터가 없는 것일 수도 있다 (시간 범위 `Last 2 days`) |
 | 스키마를 고쳤는데 DB에 반영 안 됨 | `db/schema.sql`은 DB 볼륨이 비어 있는 최초 기동에만 실행된다 (`server-setup.md` 4번) |
 | 설치 스크립트가 "같은 스크립트를 실행하는 기존 줄이 이미 있습니다"라며 등록을 거부 | 이 VM의 crontab에 같은 작업이 이미 수동으로 등록돼 있다(예: 기존 운영 VM). 그대로 등록하면 같은 작업이 두 번 돈다. 기존 줄을 `crontab -e`로 지운 뒤 다시 실행한다. **이미 운영 중인 VM에는 `--apply`를 하지 말고 `scripts/check_prereqs.py`로 점검만 한다** |
 
@@ -265,7 +277,7 @@ cron 줄이 있으면 `--apply`를 거부한다 (정말 둘 다 필요할 때만
 ## 10. 알려진 제한 (단계 3 이후)
 
 - 서버 API에 인증이 없다 → 8000 포트를 반드시 수집 VM IP로만 연다. 외부에 공개하지 않는다.
-- `docker-compose.yml`의 Grafana 관리자 비밀번호가 `admin`으로 고정돼 있다 (`.env`의 `GRAFANA_ADMIN_PASSWORD`는 아직 반영되지 않음). 첫 로그인 후 바로 바꾼다.
+- Grafana 관리자 비밀번호: 설치 스크립트로 올리면 `.env`의 `GRAFANA_ADMIN_PASSWORD`가 처음 기동 때 적용된다. `docker-compose.yml`만 쓰면 아직 `admin` 고정이다 (`--no-grafana-provision`도 마찬가지).
 - DB 포트(5432)가 모든 인터페이스에 열려 있다 → 보안그룹에서 막는다.
 - 클라우드당 수집 VM 1대 전제다.
 - 비용 수집은 `--costs`(하루 한 번)에서만 한다. 이 분리가 없는 오래된 코드는 5분 실행도 비용을 보낸다.
