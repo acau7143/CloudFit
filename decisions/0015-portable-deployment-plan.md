@@ -272,7 +272,9 @@
   - [x] GCP 수집기가 대상 VM 지표만 조회하도록 수정: 기존에는 프로젝트 전체 VM의 CPU·메모리·디스크를 모아 평균하고 첫 레코드의 id를 썼다(프로젝트에 VM이 1대뿐이라 드러나지 않음). 새 VM을 같은 프로젝트에 만들면 운영 수집 값이 섞이는 문제였다. Monitoring 쿼리를 숫자 instance id로 좁힘. 실제 API로 확인: 대상 VM으로 좁혀도 운영 결과 동일(시계열 1개), 없는 id는 0개
   - [x] 사전 점검 실환경 검증 (2026-10-24): `check_prereqs.py`를 운영 VM 3곳에서 실행 — AWS EC2 8/8 OK, GCP VM 8/8 OK, Azure VM 정상(비용 조회는 호출 한도 때문에 설계상 WARN). 점검 스크립트가 실제 환경에서 동작함을 확인
   - [x] 기존 cron 중복 방지: cloudfit 블록 밖에 같은 스크립트를 실행하는 줄이 있으면 `--apply` 거부(미리보기에서도 경고). 운영 VM 3곳은 crontab이 수동 등록돼 있어 그대로 `--apply` 하면 같은 작업이 두 번 돌 수 있었다. 테스트 7개 추가
-  - [ ] 새 VM에서 `install_server.sh` / `install_collector.sh` 실제 실행 검증 (가상환경·패키지 설치, cron 등록, 점검). 아직 미실행
+  - [~] 새 VM에서 설치 스크립트 실행 검증: **서버 부분 통과(2026-10-24)**. GCP `cloudfit-cleanroom`(e2-medium, Ubuntu 24.04, 서비스 계정 없음)에서 `install_server.sh` 실행 → 컨테이너 3개 healthy, 전체 `requirements.txt`가 Python 3.12.3에서 설치됨, `check_prereqs.py server` OK 3 / WARN 0 / FAIL 0(DB 테이블 6개). 아직: GCP 수집기(서비스 계정 권한 대기), AWS·Azure 새 환경, 서버 cron 등록, Grafana 연결(수동)
+  - [x] 새 VM 서버 검증에서 발견·수정: (1) Ubuntu 선행 패키지(`docker.io`, `docker-compose-v2`, `python3-venv`, `git`, `curl`)와 Docker 권한 재접속이 문서에 없었음 → runbook 1번에 추가 (2) `.env.example`의 `SERVER_URL` 자리표시자가 값으로 인식되는 함정 → 주석 처리 (3) `ml/anomaly_detector.py`가 `ml/model.pkl`이 없으면 `FileNotFoundError`로 끝나 새 서버는 첫 학습 전까지 10분마다 오류가 쌓임 → 안내만 남기고 DB 접속 없이 건너뛰도록 수정 + 테스트 3개
+  - [ ] 알려진 한계: 모델이 없으면 MAD 판정도 함께 건너뛴다(`detect_and_save`가 클라우드별로 모델이 없으면 건너뜀). 새 환경에서는 첫 학습(클라우드당 20건 이상) 전까지 이상탐지가 비어 있다. MAD가 모델 없이 동작하도록 분리할지는 별도 결정
   - [x] Azure 실제 crontab 반영 (2026-10-24 SSH 확인). 템플릿은 운영과 같은 3줄(5분 자원 / 매일 `--costs` / 미사용 탐지)
   - [x] Azure 미사용 탐지 로그 확인 (2026-10-24): 시스템 `python3`로 정상 동작("미사용 리소스 후보가 없습니다"). GCP와 달리 패키지 누락 없음
   - [x] `--costs` 분리 구현 (브랜치 `fix/azure-exporter-tests`, PR 대기): GCP·Azure 수집기도 AWS처럼 `--costs`가 없으면 자원만, 있으면 비용까지 전송. 비용 API가 5분마다 호출되던 것과 Azure의 매일 `--costs` 오류가 해소됨. 운영 crontab 변경 불필요, 각 VM에서 `git pull`만 하면 됨
