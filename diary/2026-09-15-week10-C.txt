@@ -1,0 +1,35 @@
+# 2026-09-15 — Day 21 (C, GCP)
+
+## 오늘 목표
+- Week10 GCP 트랙 Day1~3: CUD 할인율 확인, recommend.py 로직 추가, cost_forecast 실행 및 통합 검증
+
+## 오늘 한 일
+- GCP 공식 문서(cloud.google.com)에서 Committed Use Discount 할인율 확인
+- `ml/recommend.py`의 `judge_commitment()`가 cloud 구분 없이 AWS 기준(35%, 'reserved_instance')을 전부에 적용하던 버그 발견 및 수정 — `COMMITMENT_INFO` 딕셔너리로 클라우드별 분리
+- `server/main.py`에 `GET /forecast` 엔드포인트 추가 (`DISTINCT ON`으로 클라우드+날짜별 최신 예측만 반환)
+- `python3 ml/cost_forecast.py --cloud GCP` 실행, 7일치 예측 저장 및 API 조회까지 확인
+- Grafana 대시보드 전체 패널이 "No data"로 뜨는 문제 발견 → 원인 진단
+- 진단 중 `imds-ssrf`라는 의심스러운 데이터소스(AWS 메타데이터 서버 대상) 발견, 삭제 조치
+- Grafana admin 계정이 기본값(`admin`/`admin`)인 것 확인 — 팀 논의 후 변경 예정(금요일)으로 보류, 새 비밀번호는 `.env`에 미리 생성해둠
+- Postgres 데이터소스 비밀번호를 rotate된 새 값으로 갱신
+
+## 왜 이 기술/방법을 선택했는가
+| 항목 | 선택한 것 | 대안 | 선택 이유 |
+|------|-----------|------|-----------|
+| 클라우드별 할인율 관리 | `COMMITMENT_INFO` 딕셔너리 | if/elif로 클라우드마다 분기 | 클라우드 추가/수정 시 딕셔너리 값만 고치면 되고, 함수 로직은 안 건드려도 됨 |
+| GCP 1년 할인율 | 업계 통용 근사치 37% | GCP 공식 3년 최대치(55%) 그대로 사용 | AWS(35%)·Azure(35%)와 "1년 기준"으로 방법론을 통일해야 비교가 왜곡 안 됨 |
+| `/forecast` 쿼리 | `DISTINCT ON (cloud, forecast_date)` | 전체 이력 다 반환 | `cost_forecast`가 실행마다 겹치는 날짜를 새로 쌓는 구조라, 필터 없으면 같은 날짜가 중복 노출됨 |
+
+## 오늘 처음 안 사실
+| 몰랐던 것 | 알게 된 것 | 왜 그렇게 되는지 |
+|-----------|-----------|----------------|
+| GCP CUD도 AWS RI처럼 "1년 기준 딱 떨어지는 %"가 있을 거라 생각함 | GCP 공식 문서는 1~3년을 묶어 "최대 55%/70%"로만 제공, 1년 단독 수치는 없음 | AWS/Azure 할인 체계랑 표기 방식 자체가 다름 — 비교하려면 근사치를 쓸 수밖에 없음 |
+
+## 결과·증거
+- `python3 ml/recommend.py` 실행 결과: GCP는 `committed_use`/37%, AWS·Azure는 `reserved_instance`/35%로 정확히 분리 저장 확인
+- `curl http://localhost:8000/forecast?cloud=GCP` 결과: 7일치 예측 정상 반환
+
+## 막힌 점
+- Azure `ml/cost_forecast.py`가 아직 실행 안 돼서, 3클라우드 통합 검증(`/forecast`에 AWS/Azure/GCP 전부 조회) 완료 못함
+- Grafana(3000번 포트)가 AWS 보안그룹에서 외부에 열려있는지 아직 미확인 — admin/admin이 당분간 유지되는 만큼 확인 필요
+
