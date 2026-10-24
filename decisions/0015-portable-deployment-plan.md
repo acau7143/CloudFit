@@ -269,6 +269,7 @@
   - [x] 2-7 권한 목록: 코드 호출 기준 후보를 runbook에 정리 (GCP BigQuery 역할은 새 계정에서 검증 필요)
   - [x] 2-8 `runbook/new-environment-setup.md`
   - [x] 2-9 Python 3.10+ 가상환경 (`find_python`, 없으면 경고 후 python3)
+  - [x] GCP 수집기가 대상 VM 지표만 조회하도록 수정: 기존에는 프로젝트 전체 VM의 CPU·메모리·디스크를 모아 평균하고 첫 레코드의 id를 썼다(프로젝트에 VM이 1대뿐이라 드러나지 않음). 새 VM을 같은 프로젝트에 만들면 운영 수집 값이 섞이는 문제였다. Monitoring 쿼리를 숫자 instance id로 좁힘. 실제 API로 확인: 대상 VM으로 좁혀도 운영 결과 동일(시계열 1개), 없는 id는 0개
   - [x] 사전 점검 실환경 검증 (2026-10-24): `check_prereqs.py`를 운영 VM 3곳에서 실행 — AWS EC2 8/8 OK, GCP VM 8/8 OK, Azure VM 정상(비용 조회는 호출 한도 때문에 설계상 WARN). 점검 스크립트가 실제 환경에서 동작함을 확인
   - [x] 기존 cron 중복 방지: cloudfit 블록 밖에 같은 스크립트를 실행하는 줄이 있으면 `--apply` 거부(미리보기에서도 경고). 운영 VM 3곳은 crontab이 수동 등록돼 있어 그대로 `--apply` 하면 같은 작업이 두 번 돌 수 있었다. 테스트 7개 추가
   - [ ] 새 VM에서 `install_server.sh` / `install_collector.sh` 실제 실행 검증 (가상환경·패키지 설치, cron 등록, 점검). 아직 미실행

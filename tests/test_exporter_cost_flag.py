@@ -24,11 +24,21 @@ def gcp_calls(monkeypatch):
     for key, value in zip(GCP_KEYS, ["proj-1", "asia-northeast3-a", "vm-1", "AAAAAA-BBBBBB-CCCCCC"]):
         monkeypatch.setenv(key, value)
 
-    calls = {"collect_cost": [], "resource": [], "cost": []}
-    monkeypatch.setattr(gcp, "collect_cpu", lambda p: [{"timestamp": "t", "provider": "gcp", "instance_id": "123", "cpu_percent": 10.0}])
-    monkeypatch.setattr(gcp, "collect_memory", lambda p: [{"memory_percent": 40.0}])
-    monkeypatch.setattr(gcp, "collect_disk", lambda p, device=None: [{"disk_percent": 50.0}])
-    monkeypatch.setattr(gcp, "get_instance_spec", lambda p, z, n: "e2-micro")
+    calls = {"collect_cost": [], "resource": [], "cost": [], "metric_instance_ids": []}
+
+    def metric(records):
+        def fake(project, *args, instance_id=None, **kwargs):
+            calls["metric_instance_ids"].append(instance_id)
+            return records
+        return fake
+
+    monkeypatch.setattr(gcp, "collect_cpu", metric([{"timestamp": "t", "provider": "gcp", "instance_id": "123", "cpu_percent": 10.0}]))
+    monkeypatch.setattr(gcp, "collect_memory", metric([{"memory_percent": 40.0}]))
+    monkeypatch.setattr(gcp, "collect_disk", metric([{"disk_percent": 50.0}]))
+    monkeypatch.setattr(
+        gcp, "get_instance",
+        lambda p, z, n: {"id": 5207434110382276471, "machineType": "https://x/zones/z/machineTypes/e2-micro"},
+    )
     monkeypatch.setattr(gcp, "get_machine_specs", lambda p, z, t: {"vcpu": 2, "ram_gb": 1.0})
 
     def fake_collect_cost(project, billing, machine_type="e2-micro"):
@@ -133,3 +143,42 @@ def test_azure_main_routes_flags(monkeypatch):
     azure.main(["--costs"])
     azure.main(["--dry-run"])
     assert seen == [("send", False), ("send", True), ("dry", None)]
+
+
+# ---- 대상 VM 으로 좁히기: 프로젝트에 VM 이 여러 대여도 다른 VM 의 지표가 섞이지 않아야 한다 ----
+
+def test_gcp_metrics_are_queried_for_the_target_instance_only(gcp_calls):
+    gcp.main(["--costs"])
+    # cpu, memory, disk 세 번 모두 같은 숫자 instance id 로 좁혀서 조회
+    assert gcp_calls["metric_instance_ids"] == ["5207434110382276471"] * 3
+
+
+def test_gcp_record_uses_the_api_instance_id_not_the_first_metric_record(gcp_calls):
+    gcp.main([])
+    # 다른 VM 의 지표가 첫 레코드("123")여도 레코드 id 는 대상 VM 의 id 여야 한다
+    assert gcp_calls["resource"][0]["instance_id"] == "5207434110382276471"
+
+
+class _Capture:
+    """list_time_series 에 전달된 요청을 가로채서 필터 문자열을 모은다."""
+    def __init__(self, monkeypatch):
+        self.filters = []
+        monkeypatch.setattr(gcp.monitoring_v3, "MetricServiceClient", lambda: object())
+        monkeypatch.setattr(
+            gcp, "_list_time_series_with_retry",
+            lambda client, request, max_retries=3: self.filters.append(request["filter"]) or [],
+        )
+
+
+@pytest.mark.parametrize("func", ["collect_cpu", "collect_memory", "collect_disk"])
+def test_gcp_collect_filter_includes_instance_label_when_given(monkeypatch, func):
+    cap = _Capture(monkeypatch)
+    getattr(gcp, func)("proj-1", instance_id="999")
+    assert 'resource.labels.instance_id="999"' in cap.filters[0]
+
+
+@pytest.mark.parametrize("func", ["collect_cpu", "collect_memory", "collect_disk"])
+def test_gcp_collect_filter_has_no_instance_label_by_default(monkeypatch, func):
+    cap = _Capture(monkeypatch)
+    getattr(gcp, func)("proj-1")
+    assert "resource.labels.instance_id" not in cap.filters[0]    # 기존 동작 유지(호환)

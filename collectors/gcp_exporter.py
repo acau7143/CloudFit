@@ -48,7 +48,15 @@ def _list_time_series_with_retry(client, request, max_retries=3):
             raise
 
 
-def collect_cpu(project_id):
+def _instance_filter(instance_id):
+    """프로젝트에 VM 이 여러 대여도 대상 VM 의 지표만 가져오도록 monitored resource 라벨로 좁힌다.
+
+    instance_id 가 없으면 좁히지 않는다 (프로젝트 전체 VM 의 지표가 섞인다).
+    """
+    return f' AND resource.labels.instance_id="{instance_id}"' if instance_id else ""
+
+
+def collect_cpu(project_id, instance_id=None):
     client = monitoring_v3.MetricServiceClient()
     project_name = f"projects/{project_id}"
     now = datetime.now(timezone.utc)
@@ -57,7 +65,7 @@ def collect_cpu(project_id):
         client,
         request={
             "name": project_name,
-            "filter": 'metric.type="compute.googleapis.com/instance/cpu/utilization"',
+            "filter": 'metric.type="compute.googleapis.com/instance/cpu/utilization"' + _instance_filter(instance_id),
             "interval": monitoring_v3.TimeInterval(
                 end_time=now,
                 start_time=now - timedelta(hours=1)
@@ -79,7 +87,7 @@ def collect_cpu(project_id):
     return records
 
 
-def collect_memory(project_id):
+def collect_memory(project_id, instance_id=None):
     client = monitoring_v3.MetricServiceClient()
     project_name = f"projects/{project_id}"
     now = datetime.now(timezone.utc)
@@ -88,7 +96,10 @@ def collect_memory(project_id):
         client,
         request={
             "name": project_name,
-            "filter": 'metric.type="agent.googleapis.com/memory/percent_used" AND metric.label.state="used"',
+            "filter": (
+                'metric.type="agent.googleapis.com/memory/percent_used" AND metric.label.state="used"'
+                + _instance_filter(instance_id)
+            ),
             "interval": monitoring_v3.TimeInterval(
                 end_time=now,
                 start_time=now - timedelta(hours=1)
@@ -110,7 +121,7 @@ def collect_memory(project_id):
     return records
 
 
-def collect_disk(project_id, device=None):
+def collect_disk(project_id, device=None, instance_id=None):
     device = device or cloud_config.gcp_disk_device()
     client = monitoring_v3.MetricServiceClient()
     project_name = f"projects/{project_id}"
@@ -123,6 +134,7 @@ def collect_disk(project_id, device=None):
             "filter": (
                 'metric.type="agent.googleapis.com/disk/percent_used" '
                 f'AND metric.label.device="{device}" AND metric.label.state="used"'
+                + _instance_filter(instance_id)
             ),
             "interval": monitoring_v3.TimeInterval(
                 end_time=now,
@@ -145,15 +157,19 @@ def collect_disk(project_id, device=None):
     return records
 
 
-def get_instance_spec(project_id, zone, instance_name):
+def get_instance(project_id, zone, instance_name):
+    """대상 VM 의 Compute API 응답. 숫자 id(Monitoring 의 instance_id 라벨과 같은 값)와 machineType 이 들어 있다."""
     compute = discovery.build('compute', 'v1')
-    instance = compute.instances().get(
+    return compute.instances().get(
         project=project_id,
         zone=zone,
         instance=instance_name
     ).execute()
-    machine_type_url = instance['machineType']
-    return machine_type_url.split('/')[-1]
+
+
+def get_instance_spec(project_id, zone, instance_name):
+    instance = get_instance(project_id, zone, instance_name)
+    return instance['machineType'].split('/')[-1]
 
 
 def get_machine_specs(project_id, zone, machine_type):
@@ -304,13 +320,16 @@ def main(argv=None):
     zone = settings["GCP_ZONE"]
     instance_name = settings["GCP_INSTANCE_NAME"]
 
-    cpu_records = collect_cpu(project_id)
-    memory_records = collect_memory(project_id)
-    disk_records = collect_disk(project_id)
-    machine_type = get_instance_spec(project_id, zone, instance_name)
+    # 프로젝트에 다른 VM 이 있어도 대상 VM(GCP_INSTANCE_NAME)의 지표만 쓴다
+    instance = get_instance(project_id, zone, instance_name)
+    instance_id = str(instance["id"])
+    machine_type = instance["machineType"].split("/")[-1]
+
+    cpu_records = collect_cpu(project_id, instance_id=instance_id)
+    memory_records = collect_memory(project_id, instance_id=instance_id)
+    disk_records = collect_disk(project_id, instance_id=instance_id)
     specs = get_machine_specs(project_id, zone, machine_type)
 
-    instance_id = cpu_records[0]["instance_id"] if cpu_records else "unknown"
     record = to_common_record(instance_id, cpu_records, memory_records, disk_records, machine_type, specs)
 
     cost_records = []

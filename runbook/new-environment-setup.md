@@ -112,6 +112,9 @@ bash scripts/install_collector.sh aws --apply    # 점검 통과 시 cron 등록
 
 VM의 API 액세스 범위가 제한돼 있으면 안 된다 (`cloud-platform` 범위 권장).
 
+수집기는 `.env`의 `GCP_INSTANCE_NAME` VM의 지표만 조회한다. 프로젝트에 다른 VM이 있어도 그 VM의 값이 섞이지 않는다
+(Monitoring 쿼리를 대상 VM의 숫자 id로 좁힌다).
+
 **4-2. 메모리·디스크 에이전트 (Ops Agent)**
 
 ```bash
