@@ -127,7 +127,7 @@ CloudFit/
 ```bash
 cp .env.example .env
 ```
-새 환경에 처음부터 설치하려면 `runbook/new-environment-setup.md`, cron 설정은 `runbook/crontab-reference.md`,
+새 환경에 처음부터 설치하려면 명령 모음 `runbook/quick-commands.md`와 상세 가이드 `runbook/new-environment-setup.md`, cron 설정은 `runbook/crontab-reference.md`,
 전체 이식 계획은 `decisions/0015`를 참고.
 
 **1. 중앙 서버 + DB 실행**
