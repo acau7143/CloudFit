@@ -2,6 +2,7 @@
 
 > 대상: 팀원이 **새 AWS / Azure / GCP 계정 또는 새 VM**에서 CloudFit 전체를 다시 만들 때.
 > 범위 결정은 `decisions/0015-portable-deployment-plan.md` (팀 내부 재현 우선, 외부 배포는 확장 계획).
+> 명령만 빠르게 보려면 `quick-commands.md`(한 장짜리 치트시트).
 > 클라우드별 상세 절차(콘솔 화면, 트러블슈팅)는 기존 runbook을 참고한다:
 > `aws-collector-setup.md`, `gcp-collector-setup.md`, `azure-collector-setup-1~3.md`, `server-setup.md`
 
@@ -88,8 +89,15 @@ bash scripts/install_server.sh --apply    # 점검이 통과하면 ML 배치 cro
 
 **3-2. 메모리·디스크 에이전트 (CloudWatch Agent)**: 없으면 CPU만 수집된다.
 
+Amazon Linux는 `sudo dnf install -y amazon-cloudwatch-agent`, **Ubuntu는 `.deb` 패키지**로 설치한다:
+
 ```bash
-sudo dnf install -y amazon-cloudwatch-agent
+wget https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb && sudo dpkg -i -E ./amazon-cloudwatch-agent.deb
+```
+
+설정 적용과 시작은 둘 다 같다:
+
+```bash
 sudo cp scripts/agents/cloudwatch-agent-config.json /opt/aws/amazon-cloudwatch-agent/etc/config.json
 sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
   -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/config.json -s
@@ -97,6 +105,7 @@ sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
 
 적용 후 첫 지표가 보이기까지 10~20분 걸릴 수 있다. 디스크 지표는 `device`/`fstype` 차원이 **정확히 일치**해야 조회된다:
 `aws cloudwatch list-metrics --namespace CWAgent` 로 실제 값을 보고 다르면 `.env`의 `AWS_DISK_DEVICE`, `AWS_DISK_FSTYPE`를 맞춘다.
+기본값(`xfs`)은 Amazon Linux 기준이라 **Ubuntu의 루트(`ext4`)에서는 `AWS_DISK_FSTYPE=ext4`로 바꿔야** 디스크 지표가 조회된다.
 
 **3-3. 설정과 설치**
 
