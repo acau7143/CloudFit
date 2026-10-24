@@ -382,14 +382,21 @@ def run_dry_run() -> None:
         print("\n[주의] 디스크 값이 null입니다. 루트 파일시스템(/)의 Perf 데이터가 있는지 확인하세요.", file=sys.stderr)
 
 
-def run_send() -> None:
-    """수집한 자원 메트릭과 비용 데이터를 dry-run 없이 실제 서버로 전송"""
+def run_send(include_costs: bool = False) -> None:
+    """수집한 자원 메트릭(그리고 include_costs 이면 비용 데이터)을 dry-run 없이 실제 서버로 전송
+
+    자원은 5분마다, 비용은 하루 한 번 보내는 것이 설계다 (decisions/0003, 0003-collect-interval-separation).
+    Cost Management API 는 스코프당 분당 4회 제한이 있어(INC-001) 비용은 --costs 로만 호출한다.
+    """
     raw = collect_resource_metrics()
     record = to_common_record(raw)
 
     print("=== 자원 데이터 전송 시도 ===")
     print(json.dumps(record, indent=2, ensure_ascii=False))
     send_resource_to_server(record)
+
+    if not include_costs:
+        return
 
     config = load_config()
     credential = build_credential(config)
@@ -403,16 +410,26 @@ def run_send() -> None:
         send_cost_to_server(cost_record)
 
 
-def main() -> None:
+def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description="Azure VM resource metric collector")
-    parser.add_argument("--dry-run", action="store_true")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="서버 전송 없이 자원과 비용을 조회해서 출력한다.",
+    )
+    parser.add_argument(
+        "--costs",
+        action="store_true",
+        help="비용(Cost Management)도 함께 수집·전송한다. 지정하지 않으면 자원 메트릭만 전송한다 "
+             "(cron: 자원 5분마다, 비용은 하루 한 번 --costs).",
+    )
+    args = parser.parse_args(argv)
 
     try:
         if args.dry_run:
             run_dry_run()
         else:
-            run_send()
+            run_send(include_costs=args.costs)
     except ClientAuthenticationError as error:
         print("[ERROR] Azure 인증 실패", file=sys.stderr)
         print("확인할 것: AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET", file=sys.stderr)
