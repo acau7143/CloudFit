@@ -210,7 +210,7 @@
   - [x] AWS·GCP `.env` 키 이름 확보 (AWS: SLACK_WEBHOOK_URL, DB_PASSWORD, DATABASE_URL, GRAFANA_ADMIN_PASSWORD, SLACK_SIGNING_SECRET / GCP: SERVER_URL, SLACK_WEBHOOK_URL)
   - [x] GCP 패키지 버전 확보 (api-python-client 2.198.0 / bigquery 3.42.2 / monitoring 2.31.0)
   - [ ] Azure VM crontab·`.env` 키 (B 담당, 대기 중)
-  - [ ] GCP `google-cloud-compute` 버전 (`gcp_unused_detector.py`가 import) — C 담당
+  - [x] GCP `google-cloud-compute` 버전 확보 (1.52.0, `gcp_unused_detector.py`가 import)
   - [ ] 범위 확정(열린 질문 1·2), `decisions/` 번호 중복 정리
   - 확인 필요: AWS `.env`에는 `GRAFANA_ADMIN_PASSWORD`가 있지만 저장소의 `docker-compose.yml`은 Grafana 비밀번호를 `admin`으로 고정하고 있다. EC2의 compose 파일이 저장소와 다르게 수정돼 있을 수 있다 (`git status`로 확인). 단계 3에서 정리.
 - [~] 단계 1: 설정 분리, `.env.example`, 필수 키 검증, 테스트 수정 — **AWS·GCP·예산 구현됨(브랜치 `feature/portable-config`, 미병합), Azure는 이미 환경변수 방식이라 `.env.example`에만 반영**
@@ -220,7 +220,8 @@
   - [x] 예산: `BUDGET_AWS`/`BUDGET_AZURE`/`BUDGET_GCP` (미설정 시 건너뜀. 기존에는 클라우드별 50달러 고정이었으므로 **운영 서버 `.env`에 `BUDGET_*=50`을 넣어야 기존 동작 유지**)
   - [x] 테스트 16개 추가. 기존 Azure 테스트 5개 실패는 `main`에도 있던 것(이 작업과 무관)
   - [ ] 운영 VM `.env`에 새 키 선반영 → 그 후 병합 (공통 원칙 2)
-  - [ ] `google-cloud-compute` 버전 반영, Azure 수집기 점검
+  - [x] `google-cloud-compute==1.52.0` 반영
+  - [ ] Azure 수집기 점검
 - [ ] 단계 2: 설치 스크립트, cron 코드화, 사전 점검, 권한 문서, 통합 runbook
 - [ ] 단계 3: API 인증, DB 포트 제한, Grafana 프로비저닝, 시드, CI
 - [ ] 단계 4: 새 계정 클린룸 검증 (AWS / Azure / GCP / 서버)

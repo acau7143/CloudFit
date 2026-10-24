@@ -30,7 +30,6 @@ urllib3==2.7.0
 # --- GCP 수집기 (GCP VM의 pip freeze 실측 버전) ---
 google-api-python-client==2.198.0
 google-cloud-bigquery==3.42.2
+google-cloud-compute==1.52.0
 google-cloud-monitoring==2.31.0
-# TODO(C): gcp_unused_detector.py가 쓰는 google-cloud-compute 버전은 GCP VM에서 확인 후 추가
-#   ~/finops-env/bin/pip freeze | grep -i google-cloud-compute
 python-multipart
