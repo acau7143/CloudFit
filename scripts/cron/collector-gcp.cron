@@ -1,0 +1,5 @@
+# GCP 수집기. 운영 GCP VM의 crontab 기준 (runbook/crontab-reference.md)
+# gcp_exporter.py는 실행할 때마다 자원 + 비용을 함께 수집·전송하고 --costs 인자는 읽지 않는다.
+# 운영에는 "매일 09:00 --costs" 줄이 하나 더 있지만 5분 주기와 동작이 같아 여기서는 뺐다.
+*/5 * * * * cd @ROOT@ && @PYTHON@ collectors/gcp_exporter.py >> logs/gcp_resource.log 2>&1
+15 9 * * * cd @ROOT@ && @PYTHON@ collectors/gcp_unused_detector.py >> logs/unused_resource.log 2>&1

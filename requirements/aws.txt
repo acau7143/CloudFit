@@ -1,0 +1,5 @@
+# AWS 수집기 VM 전용 최소 패키지 (collectors/aws_exporter.py, aws_unused_detector.py)
+# 버전 기준은 루트 requirements.txt 이다. 올릴 때는 같이 올릴 것.
+boto3==1.42.97
+python-dotenv==1.2.2
+requests==2.34.2

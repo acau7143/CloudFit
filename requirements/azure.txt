@@ -1,0 +1,10 @@
+# Azure 수집기 VM 전용 최소 패키지 (collectors/azure_exporter.py, azure_unused_detector.py)
+# 버전 기준은 루트 requirements.txt 이다. 올릴 때는 같이 올릴 것.
+azure-identity==1.25.3
+azure-mgmt-compute==38.1.0
+azure-mgmt-costmanagement==5.0.0
+azure-mgmt-monitor==7.0.0
+azure-mgmt-network==32.0.0
+azure-monitor-query==2.0.0
+python-dotenv==1.2.2
+requests==2.34.2
