@@ -162,15 +162,19 @@ def gcp_checks():
 
     import gcp_exporter  # noqa: E402
 
+    target = {}
+
     def instance():
-        mtype = gcp_exporter.get_instance_spec(project, zone, name)
-        return (OK, "대상 인스턴스 조회", f"{name} ({mtype})")
+        info = gcp_exporter.get_instance(project, zone, name)
+        target["id"] = str(info["id"])
+        return (OK, "대상 인스턴스 조회", f"{name} ({info['machineType'].split('/')[-1]})")
     results.append(_safe("대상 인스턴스 조회", instance))
 
     def metrics():
-        cpu = gcp_exporter.collect_cpu(project)
-        memory = gcp_exporter.collect_memory(project)
-        disk = gcp_exporter.collect_disk(project)
+        # 수집기와 같이 대상 VM 의 지표만 조회한다 (프로젝트에 VM 이 여러 대여도 섞이지 않게)
+        cpu = gcp_exporter.collect_cpu(project, instance_id=target.get("id"))
+        memory = gcp_exporter.collect_memory(project, instance_id=target.get("id"))
+        disk = gcp_exporter.collect_disk(project, instance_id=target.get("id"))
         return metric_results(
             gcp_exporter._average(cpu, "cpu_percent"),
             gcp_exporter._average(memory, "memory_percent"),
