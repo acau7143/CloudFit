@@ -260,6 +260,16 @@
   - [ ] 수집 cron이 새 코드로 계속 도는지 `logs/aws_resource.log`, `logs/gcp_resource.log`로 확인
   - [x] `google-cloud-compute==1.52.0` 반영
   - [ ] Azure 수집기 점검
-- [ ] 단계 2: 설치 스크립트, cron 코드화, 사전 점검, 권한 문서, 통합 runbook
+- [~] 단계 2: 설치 스크립트, cron 코드화, 사전 점검, 권한 문서, 통합 runbook — **팀 내부 재현 범위로 구현됨(브랜치 `feature/team-reproduction-installer`), 새 환경 실행 검증은 아직**
+  - [x] 2-1 cron 템플릿 `scripts/cron/` (AWS·GCP·서버 ML은 운영 crontab 기준, **Azure는 임시안**), 설치 시 `# >>> cloudfit:이름 >>>` 블록으로만 등록·교체하고 기존 줄은 보존, 등록 전 백업
+  - [x] 2-2 `scripts/install_server.sh` (compose / docker-compose 둘 다 지원, health 대기, ML 배치 cron)
+  - [x] 2-3~2-5 `scripts/install_collector.sh <aws|gcp|azure>` + 클라우드별 최소 패키지 `requirements/*.txt`. cron은 `--apply`를 줘야만 등록하고 사전 점검이 실패하면 거부
+  - [x] 에이전트: AWS CloudWatch Agent 설정을 `scripts/agents/`에 템플릿으로 저장. Ops Agent·Azure Monitor Agent는 콘솔 권한/DCR 등 수동 단계가 있어 스크립트화하지 않고 runbook 절차로 둠
+  - [x] 2-6 `scripts/check_prereqs.py` (OK/WARN/FAIL, 자격증명·인스턴스·지표·비용·서버 연결·DB 테이블)
+  - [x] 2-7 권한 목록: 코드 호출 기준 후보를 runbook에 정리 (GCP BigQuery 역할은 새 계정에서 검증 필요)
+  - [x] 2-8 `runbook/new-environment-setup.md`
+  - [x] 2-9 Python 3.10+ 가상환경 (`find_python`, 없으면 경고 후 python3)
+  - [ ] 새 환경(클린룸)에서 실제 실행 검증 — 로컬에서는 쉘 문법, 가짜 crontab으로 등록 로직, 점검 판정 테스트까지만 확인함
+  - [ ] Azure 실제 crontab 반영 (B 담당)
 - [ ] 단계 3: API 인증, DB 포트 제한, Grafana 프로비저닝, 시드, CI
 - [ ] 단계 4: 새 계정 클린룸 검증 (AWS / Azure / GCP / 서버)
