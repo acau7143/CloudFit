@@ -9,6 +9,25 @@
 
 ---
 
+## 0. VM 만들기 (GCP 예시)
+
+이미 VM이 있으면 건너뛴다. 아래는 2026-10-24에 새 VM 검증에서 실제로 쓴 명령이다 (PowerShell이면 줄 끝의 `\`를 `` ` ``로 바꾼다).
+
+```bash
+gcloud compute instances create <VM 이름> \
+  --zone=asia-northeast3-a --machine-type=e2-medium \
+  --image-family=ubuntu-2404-lts-amd64 --image-project=ubuntu-os-cloud \
+  --boot-disk-size=30GB --boot-disk-type=pd-balanced \
+  --scopes=cloud-platform --labels=purpose=cleanroom-test
+```
+
+- `--scopes=cloud-platform`: 서비스 계정 권한이 API 범위에 막히지 않게 한다.
+- 서비스 계정(`--service-account`)을 따로 주지 않으면 **기본 서비스 계정**이 붙는다. 그 계정에 `new-environment-setup.md` 4-1의 역할 6개가 있으면 GCP 수집기가 동작한다 (새 VM에서 확인).
+- `Required 'iam.serviceAccounts.actAs' permission` 오류가 나면 **만드는 사람 계정**에 `서비스 계정 사용자`(`roles/iam.serviceAccountUser`) 역할이 없는 것이다. 프로젝트 소유자나 조직 관리자여도 자동으로 갖지 않는다.
+- `--labels`는 나중에 지울 VM을 헷갈리지 않게 하려는 표시다.
+
+---
+
 ## 1. 서버 VM (AWS·Azure·GCP 공통)
 
 **1-1. 선행 설치** — 끝나면 SSH를 닫았다가 다시 접속한다 (Docker 권한 적용)
@@ -91,6 +110,12 @@ bash scripts/install_collector.sh gcp            # 점검 + cron 미리보기
 bash scripts/install_collector.sh gcp --apply    # 점검 통과 후 cron 등록
 ```
 
+서버 VM에서 **이미 `install_server.sh`로 패키지를 설치했다면** 수집기 등록은 `--apply --skip-install`로 해도 된다 (같은 `.venv`를 쓴다. 새 VM에서 이 방식으로 확인).
+
+```bash
+bash scripts/install_collector.sh gcp --apply --skip-install
+```
+
 ### AWS
 
 ```bash
@@ -145,11 +170,24 @@ bash scripts/install_collector.sh azure --apply    # 점검 통과 후 cron 등�
 
 ## 3. 확인과 정리
 
-5~10분 뒤 수집 VM에서:
+**바로 확인하려면** (cron을 기다리지 않고 한 번 실행. 서버로 실제 전송한다):
+
+```bash
+.venv/bin/python collectors/<gcp|aws|azure>_exporter.py           # 자원만 전송
+.venv/bin/python collectors/<gcp|aws|azure>_exporter.py --costs   # 자원 + 비용 전송
+```
+
+보내지 않고 값만 보려면 `--dry-run`을 붙인다.
+
+cron이 스스로 도는지는 **다음 5분 지점(:00, :05, :10…)이 지난 뒤** 수집 VM에서 본다.
+등록 직후에는 `logs/`가 비어 있는 것이 정상이다 (수동 실행 출력은 이 로그에 남지 않는다).
 
 ```bash
 tail -n 5 logs/<gcp|aws|azure>_resource.log
 ```
+
+`[OK] 자원 데이터 저장 성공: ...` 줄이 있고 비용 줄이 없으면 정상이다.
+GCP 로그에 `httplib2 transport does not support per-request timeout` 경고가 반복돼도 구글 API 라이브러리가 내는 메시지일 뿐 저장에는 영향이 없다.
 
 서버 VM에서:
 
@@ -165,6 +203,18 @@ curl -s "http://localhost:8000/resources?cloud=<GCP|AWS|Azure>" | head -c 600
 
 cron을 되돌릴 때는 `crontab -e`로 `# >>> cloudfit:... >>>` ~ `# <<< cloudfit:... <<<` 블록을 지운다 (설치 때 백업: `~/crontab.backup.<시각>`).
 테스트가 끝난 VM은 **VM, 디스크, 고정 IP를 삭제**한다 (요금이 계속 나간다).
+
+GCP 테스트 VM 삭제 예시 — **지우기 전에 라벨부터 확인**해서 운영 VM을 지우지 않게 한다.
+
+```bash
+gcloud compute instances list --format="table(name,zone.basename(),status,labels)"
+```
+
+```bash
+gcloud compute instances delete <테스트 VM 이름> --zone=asia-northeast3-a
+```
+
+기본 설정이면 부팅 디스크는 VM과 함께 지워진다. 지운 뒤 `gcloud compute disks list`, `gcloud compute addresses list`로 남은 디스크·고정 IP가 없는지 본다.
 
 > 이미 운영 중인 VM(crontab을 수동으로 등록한 VM)에서는 설치 스크립트 대신 점검만 쓴다 (`new-environment-setup.md` 8-1).
 
