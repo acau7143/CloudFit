@@ -176,5 +176,6 @@ cron을 되돌릴 때는 `crontab -e`로 `# >>> cloudfit:... >>>` ~ `# <<< cloud
 |---|---|
 | 서버 설치 1-1 ~ 1-5 | 새 GCP VM(Ubuntu 24.04, e2-medium)에서 실행해 확인 |
 | 사전 점검 스크립트 | 운영 VM 3곳(AWS·GCP·Azure)에서 확인 |
-| GCP 수집기 | 새 VM에서 확인 예정 (VM 서비스 계정 권한 대기) |
+| GCP 수집기 | 새 GCP VM(기본 서비스 계정, 역할 6개)에서 실행해 확인: 사전 점검 OK 8 / WARN 0 / FAIL 0, cron 등록, 수동 실행 시 자원만 저장(`--costs`를 주면 비용까지 저장), 서버 DB에 이 VM의 instance id로 저장됨, cron의 첫 5분 주기가 스스로 실행되어 로그에 저장 성공이 남음 |
+| 서버 cron 등록 (1-4) | 같은 VM에서 서버 cron과 수집기 cron이 한 crontab에 함께 등록됨(블록 2개) |
 | AWS·Azure 수집기 | 새 VM에서는 아직 실행하지 않음. 이 문서의 AWS·Azure 명령은 운영 설정과 각 클라우드 공식 문서를 기준으로 작성 |
