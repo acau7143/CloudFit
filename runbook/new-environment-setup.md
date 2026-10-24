@@ -130,6 +130,11 @@ bash scripts/install_collector.sh aws --apply    # 점검 통과 시 cron 등록
 
 VM의 API 액세스 범위가 제한돼 있으면 안 된다 (`cloud-platform` 범위 권장).
 
+**VM을 만드는 사람**에게도 권한이 필요하다: VM에 서비스 계정을 붙이려면 `iam.serviceAccounts.actAs`(`roles/iam.serviceAccountUser`)가 있어야 한다.
+프로젝트 소유자나 조직 관리자여도 자동으로 갖지 않으며, 없으면 VM 생성이 `Required 'iam.serviceAccounts.actAs' permission` 오류로 실패한다.
+새 VM 생성 명령 예시는 `quick-commands.md` 0번에 있다.
+기본 서비스 계정(Compute Engine default)에 위 역할 6개가 있으면 따로 서비스 계정을 만들 필요가 없다 (2026-10-24 새 VM에서 확인).
+
 수집기는 `.env`의 `GCP_INSTANCE_NAME` VM의 지표만 조회한다. 프로젝트에 다른 VM이 있어도 그 VM의 값이 섞이지 않는다
 (Monitoring 쿼리를 대상 VM의 숫자 id로 좁힌다).
 
@@ -188,11 +193,14 @@ bash scripts/install_collector.sh azure
 
 ## 6. 확인
 
-수집 VM에서 5~10분 뒤:
+수집 VM에서 **다음 5분 지점(:00, :05, :10…)이 지난 뒤**:
 
 ```bash
 tail -n 5 logs/<aws|gcp|azure>_resource.log
 ```
+
+cron을 등록한 직후에는 `logs/`가 비어 있고 로그 파일도 없다 (오류 아님). 기다리지 않고 확인하려면 수집기를 한 번 수동 실행한다:
+`.venv/bin/python collectors/<aws|gcp|azure>_exporter.py` (자원만) / `--costs` 추가(자원 + 비용). 수동 실행 출력은 이 로그 파일에 남지 않는다.
 
 서버 VM에서:
 
@@ -226,6 +234,9 @@ curl -s "http://localhost:8000/resources?cloud=AWS" | head -c 600
 | 실행 시각이 예상과 다름 | cron은 VM 시간대 기준이다. `timedatectl` 확인 |
 | `ModuleNotFoundError` | cron 줄이 시스템 `python3`를 쓰는 경우. 설치 스크립트가 만든 `.venv/bin/python`을 쓰는지 `crontab -l`로 확인 |
 | 수집기가 서버에 못 보냄 | 서버 VM 보안그룹의 8000 포트, `.env`의 `SERVER_URL` |
+| 새 GCP VM 생성이 `iam.serviceAccounts.actAs` 오류로 실패 | VM을 만드는 계정에 `서비스 계정 사용자`(`roles/iam.serviceAccountUser`) 역할을 준다. 소유자·조직 관리자도 자동으로 갖지 않는다 |
+| `tail`이 `No such file or directory` (`gcp_resource.log` 등) | cron 등록 후 첫 5분 지점이 아직 지나지 않았다. 몇 분 뒤 다시 본다 |
+| GCP 로그에 `httplib2 ... per-request timeout` 경고가 반복 | 구글 API 라이브러리가 내는 메시지이고 저장에는 영향이 없다 |
 | 디스크 지표만 비어 있음 | AWS: `AWS_DISK_DEVICE`/`AWS_DISK_FSTYPE`, GCP: `GCP_DISK_DEVICE`(Ops Agent의 device 라벨) |
 | GCP 메모리/디스크가 비어 있음 | Ops Agent 로그의 `API Check: FAIL` → 서비스 계정에 `metricWriter`/`logWriter` 추가 후 `sudo systemctl restart google-cloud-ops-agent` |
 | Azure 비용 조회가 429 | 비용 API 호출 한도(스코프당 분당 4회). 비용은 `--costs`(하루 한 번)로만 호출하고 5분 줄에는 붙이지 않는다 (`incidents/INC-001`) |
@@ -248,6 +259,7 @@ cron 줄이 있으면 `--apply`를 거부한다 (정말 둘 다 필요할 때만
 ## 9. 되돌리기와 정리
 
 - cron만 제거: `crontab -e`로 `# >>> cloudfit:... >>>` ~ `# <<< cloudfit:... <<<` 블록을 지운다. 또는 설치 때 출력된 백업으로 복원: `crontab ~/crontab.backup.<시각>`
+- GCP 테스트 VM 삭제: `quick-commands.md` 3번 (라벨 확인 후 `gcloud compute instances delete`)
 - 새 계정에서 검증한 뒤에는 **VM, 디스크, 고정 IP, BigQuery 데이터셋, Log Analytics 작업 영역을 삭제**한다 (검증 환경도 비용이 발생한다).
 
 ## 10. 알려진 제한 (단계 3 이후)
