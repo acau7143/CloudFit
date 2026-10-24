@@ -7,6 +7,7 @@ azure-mgmt-compute==38.1.0
 azure-mgmt-core==1.6.0
 azure-mgmt-costmanagement==5.0.0
 azure-mgmt-monitor==7.0.0
+azure-mgmt-network==32.0.0
 azure-monitor-query==2.0.0
 boto3==1.42.97
 certifi==2026.6.17

@@ -1,106 +1,128 @@
-# 0012. 클라우드별 약정 할인율 산정 방식 (근사치 → 실측 API 조회)
+# 0012. 클라우드별 약정 할인율 산정 방식
 
 ## Context
-Week10에서 `ml/recommend.py`에 클라우드별 약정 할인(AWS/Azure Reserved Instance, GCP
-Committed Use Discount) 전환 추천 기능을 추가하면서, `COMMITMENT_INFO` 딕셔너리에
-할인율을 하드코딩했다.
 
-```python
-COMMITMENT_INFO = {
-    'AWS':   {'label': 'reserved_instance', 'discount_pct': 35.0},
-    'Azure': {'label': 'reserved_instance', 'discount_pct': 35.0},
-    'GCP':   {'label': 'committed_use',     'discount_pct': 37.0},
-}
-```
+Week10에서 `ml/recommend.py`에 클라우드별 약정 할인(AWS/Azure Reserved Instance,
+GCP Committed Use Discount) 전환 추천 기능(`commitment_recommendation`,
+`estimated_discount_pct`)을 추가했다.
 
-이 값들은 "1년 No Upfront 공식 문서상 30~40% 범위의 중간값" 같은 업계 통용
-근사치였고, 정식 출처나 대안 비교가 문서화돼 있지 않았다.
-
-문제는 `/recommendations` API가 `"estimated_discount_pct": 37.0`처럼 이 근사치를
-그대로 응답에 내보낸다는 점이다. `float` 단일값이라 마치 실측 정밀값처럼 보이는데,
-실제로는 근사치라는 게 API 응답만 봐서는 전혀 드러나지 않는다. 통합 검증(Day3)
-과정에서 이 문제가 지적됨(성민).
+초기 `COMMITMENT_INFO` 값은 "1년 No Upfront 공식 문서상 30~40% 범위의 중간값"
+같은 업계 통용 근사치였다. 문제는 `/recommendations` API가 이 근사치를
+`"estimated_discount_pct": 35.0`처럼 그대로 응답에 내보낸다는 점이다. `float`
+단일값이라 마치 실측 정밀값처럼 보이는데, 실제로는 근사치라는 게 API 응답만
+봐서는 전혀 드러나지 않는다. 통합 검증(Day3) 과정에서 이 문제가 지적됨(성민).
 
 ## Decision
-근사치를 유지하되 문서에만 한계를 명시하는 방식 대신, **각 클라우드의 공식 가격
-조회 API로 이 프로젝트가 실제 사용 중인 인스턴스 종류·리전 기준 실측 할인율을
-1회 조회해서 `COMMITMENT_INFO`에 반영**한다.
 
-상시 도는 파이프라인이 아니라 클라우드별 조사용 스크립트(`ml/*_lookup.py`)로 만들고,
-각 클라우드 담당자가 자기 인증 정보로 직접 실행한다.
+근사치를 유지하되 문서에만 한계를 명시하는 방식 대신, **각 클라우드의 공식
+가격 조회 API로 이 프로젝트가 실제 사용 중인 인스턴스 종류·리전 기준 실측
+할인율을 1회 조회해서 `COMMITMENT_INFO`에 반영**한다.
 
-| 클라우드 | 담당 | API | 인증 | 스크립트 |
-|---|---|---|---|---|
-| GCP | C (성민) | Cloud Billing Catalog API | 서비스 계정 필요 | `ml/gcp_cud_lookup.py` |
-| Azure | B | Retail Prices API (prices.azure.com) | 불필요 (완전 공개) | `ml/azure_reservation_lookup.py` |
-| AWS | A | Price List API (`boto3.client('pricing')`) | IAM 자격증명 필요 | `ml/aws_ri_lookup.py` |
+상시 도는 파이프라인이 아니라 클라우드별 조사용 스크립트로 만들고, 각 클라우드
+담당자가 자기 인증 정보로 직접 실행한다.
+
+| 클라우드 | API | 인증 | 상태 |
+|---|---|---|---|
+| AWS | Price List API (`boto3.client('pricing')`, us-east-1 고정) | IAM 자격증명 필요 | 완료 (39.23%) |
+| Azure | Retail Prices API (prices.azure.com) | 불필요 (완전 공개) | 완료 (44.4%) |
+| GCP | Cloud Billing Catalog API | 서비스 계정 필요 | 완료 (37.0%) |
 
 ## Why
-- API 응답 구조(단일 `float` 필드)가 "근사치"와 "실측값"을 구분하지 못해서, 근사치를
-  그대로 두면 API 소비자(대시보드, 발표 심사위원)가 정밀 실측값으로 오해할 수 있음
-- 발표/심사 중 "이 37%는 어떻게 나온 숫자냐"는 질문에 "실제 가격 API로 조회했다"고
-  답할 수 있어야 신뢰도가 생김
-- 완전 자동화(추천 생성 시마다 실시간 API 호출)는 클라우드당 반나절~하루 소요로
-  이번 주(Week10 Day4~5에 README·발표자료·통합테스트가 남아있음) 일정에 부담이 큼
-  → "1회 조사 후 하드코딩 교체" 절충안을 채택 (대안 비교 참고)
+
+- API 응답 구조(단일 `float` 필드)가 "근사치"와 "실측값"을 구분하지 못해서,
+  근사치를 그대로 두면 API 소비자(대시보드, 발표 심사위원)가 정밀 실측값으로
+  오해할 수 있음
+- 발표/심사 중 "이 수치는 어떻게 나온 거냐"는 질문에 "실제 가격 API로
+  조회했다"고 답할 수 있어야 신뢰도가 생김
+- 완전 자동화(추천 생성 시마다 실시간 API 호출)는 클라우드당 반나절~하루
+  소요로 Week10 잔여 일정(Day4~5 대시보드·통합테스트·README)에 부담이 큼
 
 ## 대안과의 비교
-| 대안 | 소요 시간(클라우드당) | 비교 |
+
+| 대안 | 소요 시간 | 비교 |
 |---|---|---|
-| 근사치 유지 + 문서에 한계만 명시 | 0 (문서화만) | 가장 빠르지만 API 응답이 여전히 부정확한 값을 정밀값처럼 노출하는 문제는 그대로 남음 |
-| **1회 API 조회 후 하드코딩 교체 (채택)** | 2~3시간 | 정확도 개선 대비 시간 부담이 적음. 대신 인스턴스 타입/리전이 바뀌면 재조회 필요 |
-| 실시간 API 연동(추천 생성 시마다 호출) | 반나절~하루 | 가장 정확하지만 SKU 매칭 로직 견고화·캐싱·에러 처리까지 갖춰야 해서 이번 주 일정에 맞지 않음. README "향후 개선 방향"에 기록해두고 보류 |
+| 근사치 유지 + 문서에 한계만 명시 | 0 | 가장 빠르지만, API가 부정확한 값을 정밀값처럼 계속 노출하는 문제는 그대로 남음 |
+| **1회 API 조회 후 하드코딩 교체 (채택)** | 클라우드당 1~2시간 | 정확도 개선 대비 시간 부담이 적음. 인스턴스 타입/리전이 바뀌면 재조회 필요 |
+| 실시간 API 연동 (추천 생성마다 호출) | 반나절~하루 | 가장 정확하지만 SKU 매칭·캐싱·에러 처리까지 갖춰야 해서 이번 주 일정엔 부적합. 향후 개선 방향으로 보류 |
 
-## Result
-- **GCP**: 조회 진행 중 (`ml/gcp_cud_lookup.py` 실행 결과 반영 예정)
-- **Azure**: `Standard_B1s` / `koreacentral` 기준 실측 **35.03%** 확인 (Savings Plan
-  값 사용 — B 시리즈는 전통 Reserved VM Instance 미지원이라는 사실을 이번에 처음
-  확인함). 단, 이 VM 크기/리전이 실제 `azure_exporter.py` 운영 값인지 재확인 필요
-- **AWS**: `t3.micro` / `ap-northeast-2` 기준 실측 **39.23%** 확인 (1yr No Upfront)
-- 3개 클라우드 모두 확정되면 `ml/recommend.py`의 `COMMITMENT_INFO`를 갱신하고
-  이 Result 섹션도 최종 수치로 업데이트한다
+## Result — Azure (B, 은창)
 
-## 담당자별 할 일
+### 조사 대상
 
-### B (Azure) 담당자
-1. 실제 VM 크기/리전 확인:
-   ```bash
-   az vm show --name <vm이름> -g <리소스그룹> --query "[hardwareProfile.vmSize, location]"
-   ```
-2. 스크립트 실행 (인증 불필요, `pip install requests`만 있으면 됨):
-   ```bash
-   python3 ml/azure_reservation_lookup.py --vm-size <실제크기> --region <실제리전>
-   ```
-3. 출력된 할인율을 이 문서 Result 섹션과 `recommend.py`의 `COMMITMENT_INFO['Azure']`에 반영
-4. 실행 중 SKU가 하나도 안 나오면: `--vm-size`/`--region` 철자 확인 (Azure 포털 표기와
-   `armSkuName`/`armRegionName` 표기가 다를 수 있음 — 예: 화면엔 "Central Korea"인데
-   API 파라미터는 `koreacentral`)
+- 실제 운영 VM 확인: `az vm show`로 `Standard_B2ats_v2` / `koreacentral` /
+  Linux 확인 (`azure_exporter.py`가 cron으로 수집 중인 VM과 동일)
 
-### A (AWS) 담당자
-1. AWS Price List API는 **`us-east-1` 리전에서만 서비스**된다 (다른 리전으로 클라이언트
-   만들면 빈 결과 나옴 — 실제 EC2가 도는 리전과 무관하게 API 호출 자체는 항상 us-east-1)
-2. 필요 IAM 권한: `pricing:GetProducts` (읽기 전용)
-3. 스크립트(`ml/aws_ri_lookup.py`)는 성민이 이어서 작성해 공유 예정. 급하면 아래 원리로
-   직접 조회 가능:
-   ```python
-   import boto3
-   client = boto3.client('pricing', region_name='us-east-1')
-   response = client.get_products(
-       ServiceCode='AmazonEC2',
-       Filters=[
-           {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': '<실제 인스턴스 타입>'},
-           {'Type': 'TERM_MATCH', 'Field': 'regionCode', 'Value': '<실제 리전>'},
-           {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
-           {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
-           {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'},
-       ]
-   )
-   # response['PriceList']의 각 항목(JSON 문자열)에 'terms'.'OnDemand'와
-   # 'terms'.'Reserved' 가 같이 들어있음. Reserved 안에서
-   # leaseContractLength='1yr', purchaseOption='No Upfront' 조건인 걸 찾아서
-   # OnDemand 시간당가와 비교하면 할인율이 나옴.
-   ```
-4. 결과를 이 문서와 `COMMITMENT_INFO['AWS']`에 반영
+### 조회 방법
 
-막히면 혼자 2시간 이상 붙잡지 말고 팀 채팅에 에러 메시지와 함께 바로 공유할 것
-(GUIDELINES.md 3번 공통 규칙).
+Azure Retail Prices API를 PowerShell(`Invoke-RestMethod`)에서 직접 호출:
+
+```
+armSkuName eq 'Standard_B2ats_v2' and armRegionName eq 'koreacentral' and type eq 'Reservation'
+armSkuName eq 'Standard_B2ats_v2' and armRegionName eq 'koreacentral' and type eq 'Consumption'
+```
+
+### 계산
+
+| 항목 | 값 |
+|---|---|
+| 온디맨드 (Linux) | $0.0117/시간 → 연 환산 약 $102.5 |
+| 1년 예약 총액 | $57 |
+| 3년 예약 총액 | $117 (연 환산 $39) |
+| **1년 실측 할인율** | **44.4%** |
+| 3년 실측 할인율 (참고) | 61.9% |
+
+**주의 — API 표기 오류**: Reservation 타입 항목의 `unitOfMeasure`는 "1 Hour"로
+표시되지만, `retailPrice`는 실제로 시간당 가격이 아니라 **약정 기간 전체
+총액**이다. 이 값을 시간당 가격으로 착각하면 계산이 완전히 틀어지므로,
+다음에 이 API를 다시 쓸 때 주의할 것.
+
+### 부수적으로 확인된 사실 — B-시리즈 RI 지원 여부
+
+이전에 "B-시리즈(버스터블)는 전통 Reserved VM Instance를 지원하지 않을 것"
+이라는 추정이 있었으나, `type eq 'Reservation'` 쿼리에서 1년/3년 항목이 정상
+조회됨을 확인 — 최소한 `B2ats_v2` 세대는 **RI를 지원**한다. 따라서
+`commitment_recommendation` 라벨은 `'reserved_instance'`를 그대로 사용.
+
+### `COMMITMENT_INFO` 반영
+
+```python
+'Azure': {'label': 'reserved_instance', 'discount_pct': 44.4},
+```
+
+`ml/recommend.py`에 반영 완료, `python3 ml/recommend.py --dry-run | grep Azure`로
+검증 완료. `feature/aws-collector` 브랜치에 커밋·푸시됨.
+
+### uptime_ratio_7d 판정 근거 확인
+
+`judge_commitment()`가 쓰는 `uptime_ratio_7d`(가동 시간 비율 = 최근 7일 실제
+레코드 수 / 기대 레코드 수 2016)의 전제 — "레코드 존재 = VM 가동 중" — 가
+Azure 트랙에서도 유효한지 확인함. `azure_exporter.py`는 Azure VM **자체
+내부**에서 5분 주기 crontab으로 실행되므로(6주차에 구축), VM이 꺼지면 cron
+자체가 돌 수 없어 레코드가 자연스럽게 비게 된다. 즉 로컬/원격에서 API를
+호출하는 방식이 아니라, "레코드 존재 = 가동 중" 전제가 안전하게 성립함.
+
+### 비용 예측 (Day3)
+
+`ml/cost_forecast.py --cloud Azure` 실행, `cost_forecast` 테이블에 7일치
+(2026-09-19 ~ 2026-09-25) 예측 저장 완료.
+
+### Grafana 대시보드 (Day4)
+
+멀티클라우드 대시보드에 Azure 비용 예측 패널 추가: 실제 비용(실선) + 예측
+비용(점선, Line style override) + 예측 상·하한 음영(Fill below to override).
+
+## Result — AWS (A)
+
+- 조회 스크립트: `ml/aws_ri_lookup.py`, `t3.micro` / `ap-northeast-2` 기준
+  1년 No Upfront 실측 할인율 **39.23%**
+- AWS Price List API(`boto3.client('pricing')`)는 실제 EC2 리전과 무관하게
+  **`us-east-1`에서만 서비스**된다 (다른 리전으로 클라이언트를 만들면 빈 결과가
+  나옴). 필요 IAM 권한은 `pricing:GetProducts` (읽기 전용)
+- `ml/recommend.py`의 `COMMITMENT_INFO['AWS']`에 반영 완료
+
+## 남은 것
+
+- GCP(C) 파트 Result 섹션은 아직 비어 있음. 실측치(37.0%)는 `ml/recommend.py`의
+  `COMMITMENT_INFO['GCP']`에 이미 반영돼 있으므로 조회 방법·계산 근거를 채우면
+  Context/Result 취합 완료
+- 3개 클라우드 Result가 모두 확정되면 팀 전체 리뷰 후 `main`/`dev`로 merge
