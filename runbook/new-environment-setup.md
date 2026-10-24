@@ -212,6 +212,20 @@ curl -s "http://localhost:8000/resources?cloud=AWS" | head -c 600
 | GCP 메모리/디스크가 비어 있음 | Ops Agent 로그의 `API Check: FAIL` → 서비스 계정에 `metricWriter`/`logWriter` 추가 후 `sudo systemctl restart google-cloud-ops-agent` |
 | Azure 비용 조회가 429 | 비용 API 호출 한도(스코프당 분당 4회). 비용은 `--costs`(하루 한 번)로만 호출하고 5분 줄에는 붙이지 않는다 (`incidents/INC-001`) |
 | 스키마를 고쳤는데 DB에 반영 안 됨 | `db/schema.sql`은 DB 볼륨이 비어 있는 최초 기동에만 실행된다 (`server-setup.md` 4번) |
+| 설치 스크립트가 "같은 스크립트를 실행하는 기존 줄이 이미 있습니다"라며 등록을 거부 | 이 VM의 crontab에 같은 작업이 이미 수동으로 등록돼 있다(예: 기존 운영 VM). 그대로 등록하면 같은 작업이 두 번 돈다. 기존 줄을 `crontab -e`로 지운 뒤 다시 실행한다. **이미 운영 중인 VM에는 `--apply`를 하지 말고 `scripts/check_prereqs.py`로 점검만 한다** |
+
+## 8-1. 이미 운영 중인 VM에서는
+
+기존 운영 VM(crontab을 수동으로 등록해 둔 VM)에서는 설치 스크립트를 쓰지 않고 **사전 점검만** 실행한다.
+점검은 조회만 하고 아무것도 바꾸지 않는다.
+
+```bash
+python3 scripts/check_prereqs.py <aws|gcp|azure>      # GCP VM은 ~/finops-env/bin/python3 로 실행
+```
+
+2026-10-24에 운영 VM 3곳에서 실행했고 결과는 모두 정상이었다(AWS 8/8, GCP 8/8, Azure 정상. Azure 비용 조회는 호출 한도 때문에
+점검에서 일부러 호출하지 않아 `[WARN]`으로 표시된다). 스크립트는 안전장치로, cloudfit 블록 밖에 같은 스크립트를 실행하는
+cron 줄이 있으면 `--apply`를 거부한다 (정말 둘 다 필요할 때만 `CLOUDFIT_ALLOW_DUPLICATE_CRON=1`).
 
 ## 9. 되돌리기와 정리
 
