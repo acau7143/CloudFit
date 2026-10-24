@@ -1,0 +1,22 @@
+apiVersion: 1
+
+# CloudFit 대시보드가 쓰는 PostgreSQL 데이터소스 (docker compose 안의 db 서비스).
+# uid 는 dashboard/dashboard.json 의 모든 패널이 참조하는 값과 같아야 한다. 바꾸면 패널이 비어 보인다.
+# 비밀번호는 docker-compose.yml 이 grafana 컨테이너에 넘겨 주는 DB_PASSWORD 환경변수를 쓴다.
+datasources:
+  - name: grafana-postgresql-datasource
+    uid: dfu9a7kvokcg0c
+    type: grafana-postgresql-datasource
+    access: proxy
+    orgId: 1
+    url: db:5432
+    user: finops
+    isDefault: true
+    editable: false
+    jsonData:
+      database: finops_db
+      sslmode: disable
+      postgresVersion: 1500
+      timescaledb: false
+    secureJsonData:
+      password: ${DB_PASSWORD}

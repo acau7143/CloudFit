@@ -1,0 +1,15 @@
+apiVersion: 1
+
+# dashboard/ 폴더의 JSON 을 Grafana 시작 때 자동으로 불러온다 (docker-compose.yml 에서 /etc/grafana/dashboards 로 마운트).
+# 대시보드를 고치려면 Grafana 화면에서 고친 뒤 JSON 을 내보내 dashboard/dashboard.json 을 갱신한다
+# (v2 스키마 파일은 metadata 를 name 하나만 남겨야 한다. runbook/new-environment-setup.md 참고).
+providers:
+  - name: cloudfit
+    orgId: 1
+    folder: CloudFit
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 60
+    options:
+      path: /etc/grafana/dashboards
