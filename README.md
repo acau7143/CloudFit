@@ -1,61 +1,140 @@
-# CloudFit — 멀티클라우드 FinOps 모니터링 프로젝트
+# CloudFit — 멀티클라우드 FinOps 모니터링
 
-> **진행 중 문서입니다.** 최종 완성본은 11주차(9월 초)에 정리 예정이며, 이 버전은 4주차(2026-07-25) 기준 진행 상황을 담고 있습니다.
+AWS · Azure · GCP에 흩어진 자원 사용률과 비용을 한 곳에 모아 보여주고, 이상 징후·낭비 자원·절감 기회를 자동으로 찾아 Slack으로 알려주는 시스템입니다.
 
-AWS / Azure / GCP 세 클라우드에 흩어진 자원 사용률과 비용 데이터를 한 곳에 모아서, 나중에 저활용 자원 탐지·비용 최적화 추천·ML 기반 이상탐지까지 확장하는 것을 목표로 하는 팀 프로젝트입니다. 한이음 드림업 공모전 제출, 캡스톤 발표, 논문게재 신청을 목표로 진행 중입니다.
+클라우드를 여러 개 쓰면 비용을 확인할 때마다 콘솔을 따로 열어야 하고, 쓰지 않는 디스크나 갑자기 튄 사용량을 놓치기 쉽습니다. CloudFit은 세 클라우드의 데이터를 공통 형식으로 모아 하나의 대시보드와 챗봇으로 답합니다.
 
-- 기간: 2026.06.23 ~ 2026.10.08 (15주)
 - 팀: A(AWS 담당) · B(Azure 담당) · C(GCP 담당)
+- 2026 창의적 종합설계 경진대회 출품작 (충북대학교)
 
 ---
 
-## 지금 뭐가 되나 (10주차 기준)
+## 할 수 있는 것
 
-수집 파이프라인 위에 이상탐지, 추천, 예측까지 얹은 상태입니다. 인프라는 4주차 이후 개인 노트북+ngrok에서 EC2 상시 운영으로 이전했습니다.
+| 기능 | 내용 | 코드 |
+|------|------|------|
+| 통합 수집 | 3개 클라우드의 CPU·메모리·디스크(5분마다)와 서비스별 비용(하루 한 번)을 공통 형식으로 수집 | `collectors/*_exporter.py` |
+| 통합 대시보드 | 누적·일별 비용, 클라우드별 비교, 자원 사용률, 이상탐지 오버레이 (Grafana) | `dashboard/dashboard.json` |
+| 이상탐지 | 지표별(CPU·메모리·디스크) 판정. 평균±3σ와 median/MAD 두 방식 | `ml/train.py`, `ml/anomaly_detector.py` |
+| 비용 예측 | 클라우드별 향후 7일 비용 예측 (Prophet) | `ml/cost_forecast.py` |
+| 비용 최적화 추천 | 저활용 인스턴스 다운사이즈, 가동률 높은 인스턴스의 약정 할인(RI/CUD) 전환 | `ml/recommend.py` |
+| 미사용 리소스 탐지 | 연결 안 된 디스크·공인 IP. 연속 2회 발견될 때만 알림 | `collectors/*_unused_detector.py` |
+| 예산 알림 | 클라우드별 월 예산 초과 시 Slack 알림 | `server/budget_alert.py` |
+| Slack 챗봇 | `/finops` 명령으로 "이번 달 비용", "이상탐지 몇 건" 같은 질문에 답변 | `server/main.py` |
 
-| 항목 | 상태 |
-|------|------|
-| 자원/비용 수집 (AWS/Azure/GCP) | 완료 (5분/1일 주기 cron 자동화) |
-| 공통 스키마 정렬 (decisions/0001, 0002) | 완료 |
-| 중앙 서버 (FastAPI + PostgreSQL) | EC2 인스턴스에서 Docker Compose로 상시 운영 |
-| ML 이상탐지 (Isolation Forest, 클라우드별 모델) | 완료 |
-| 비용 최적화 추천 (downsize/keep) | 완료 |
-| Grafana 대시보드 | 운영 중 |
-| 미사용 리소스 탐지 (AWS 완료 / Azure GCP 각자 확인 필요) | AWS - collectors/aws_unused_detector.py, unused_resources 테이블 |
-| 예산 초과 Slack 알림 (AWS 완료 / Azure GCP 각자 확인 필요) | AWS - server/budget_alert.py |
-| 예약 인스턴스(RI) 전환 추천 (AWS 완료 / Azure GCP 각자 확인 필요) | AWS - ml/recommend.py에 commitment_recommendation 컬럼 추가 |
-| 비용 예측 (Prophet, AWS 완료 / Azure GCP 각자 확인 필요) | AWS - ml/cost_forecast.py, cost_forecast 테이블 |
-
-> Azure(B), GCP(C) 담당 항목의 최신 상태는 각자 업데이트 부탁드립니다 (10주차 기준 AWS만 확인 완료).
+약정 할인율은 근사치가 아니라 각 클라우드의 가격 API로 실측한 값입니다 (AWS 39.23%, Azure 44.4%, GCP 37.0% — `decisions/0012`).
 
 ---
 
-## 아키텍처
+## 구조
 
-```
-[AWS EC2]  --\
-[Azure VM] ---+--> collector (Python, cron) --> to_common_record() --> HTTP POST --\
-[GCP VM]   --/                                                                      v
-                                                              FastAPI 서버 (EC2, Docker Compose)
-                                                                       |
-                                                                       v
-                                                     PostgreSQL (resource_metrics, cost_records,
-                                                        anomaly_results, recommendations,
-                                                        unused_resources, cost_forecast)
-                                                                       |
-                                        +------------------------------+------------------------------+
-                                        v                              v                              v
-                                  Grafana 대시보드              ml/ 배치 스크립트              server/notifier.py
-                                  (실측값 + 이상탐지            (anomaly_detector,                    |
-                                   오버레이 패널)                recommend, cost_forecast)             v
-                                                                       |                          Slack 알림
-                                                                       v                    (미사용 리소스 발견,
-                                                                 결과를 다시 DB에 저장             예산 초과)
+```mermaid
+flowchart LR
+    subgraph collect["각 클라우드 VM (cron)"]
+        AWS["AWS EC2<br/>aws_exporter"]
+        AZ["Azure VM<br/>azure_exporter"]
+        GCP["GCP VM<br/>gcp_exporter"]
+    end
+    AWS & AZ & GCP -->|"HTTP POST<br/>(공통 스키마)"| API["FastAPI 서버<br/>:8000"]
+    API --> DB[("PostgreSQL")]
+    DB --> ML["ML 배치 (cron)<br/>이상탐지 · 예측 · 추천"]
+    ML --> DB
+    DB --> GF["Grafana<br/>:3000"]
+    ML -->|이상 · 예산 · 미사용| SL["Slack 알림"]
+    SL <-->|"/finops 질문"| API
 ```
 
-각 클라우드의 수집기가 5분 간격 자원 지표와 하루 1회 비용 지표를 조회해 공통 스키마로 변환한 뒤 중앙 서버 API로 전송합니다. 서버는 EC2 인스턴스 위 Docker Compose로 PostgreSQL·Grafana와 함께 상시 운영됩니다.
+- 수집기는 각 클라우드 VM에서 cron으로 돌고, 결과를 중앙 서버 API로 보냅니다.
+- 서버(API · DB · Grafana)는 Docker Compose로 한 VM에서 운영합니다. 현재는 AWS EC2에서 ML 배치까지 함께 돕니다.
+- 자원 지표와 비용은 같은 데이터를 다시 보내도 중복 저장되지 않고 최신 값으로 갱신됩니다 (`ON CONFLICT`).
 
-ml/ 아래 배치 스크립트들이 주기적으로(또는 수동 실행으로) DB를 읽어 이상탐지·추천·예측 결과를 다시 DB에 써넣고, unused_resources나 예산 초과 같은 즉시성 있는 이벤트는 server/notifier.py를 통해 Slack으로 알림이 갑니다.
+### 수집·배치 주기
+
+| 주기 | 작업 | 실행 위치 |
+|------|------|-----------|
+| 5분 | 자원 지표 수집 | 각 클라우드 VM |
+| 매일 09:00 | 비용 수집 (`--costs`) | 각 클라우드 VM |
+| 매일 09:15 | 미사용 리소스 탐지 | 각 클라우드 VM |
+| 10분 | 이상탐지 | 서버 VM |
+| 매일 09:30~09:50 | 비용 예측 → 예산 알림 → 최적화 추천 | 서버 VM |
+| 매주 일 03:00 | 이상탐지 모델 학습 (최근 7일) | 서버 VM |
+
+시각은 VM 시간대 기준입니다. 실제 crontab은 `runbook/crontab-reference.md`, 설치용 템플릿은 `scripts/cron/`에 있습니다.
+
+---
+
+## 시작하기
+
+새 환경에 설치하는 전체 절차는 [`runbook/new-environment-setup.md`](runbook/new-environment-setup.md), 순서대로 칠 명령만 모은 것은 [`runbook/quick-commands.md`](runbook/quick-commands.md)에 있습니다. 아래는 요약입니다.
+
+### 1. 설정 파일
+
+```bash
+cp .env.example .env
+```
+
+계정 · 리전 · 인스턴스처럼 환경마다 다른 값은 코드가 아니라 `.env`에서 읽습니다. 필수 값이 빠지면 어떤 키가 빠졌는지 알려주고 종료합니다. VM마다 필요한 섹션이 다르니 `.env.example`의 안내를 따르세요.
+
+### 2. 서버 VM
+
+```bash
+bash scripts/install_server.sh          # 컨테이너 기동, 패키지 설치, 사전 점검 (cron은 미리보기만)
+bash scripts/install_server.sh --apply  # 점검이 통과하면 ML 배치 cron까지 등록
+```
+
+API는 `http://<서버>:8000`, Grafana는 `http://<서버>:3000`에서 열립니다. 설치 스크립트는 Grafana 데이터소스와 대시보드를 자동으로 만듭니다 (`docker-compose.grafana.yml`). 이미 Grafana를 수동으로 설정한 서버라면 `--no-grafana-provision`을 붙이세요.
+
+### 3. 수집 VM
+
+```bash
+bash scripts/install_collector.sh gcp          # aws | gcp | azure
+bash scripts/install_collector.sh gcp --apply  # 점검이 통과하면 수집 cron 등록
+```
+
+메모리·디스크 지표는 클라우드 기본 지표가 아니라서 에이전트가 필요합니다 (AWS CloudWatch Agent, GCP Ops Agent, Azure Monitor Agent). 설치 방법은 runbook에 있습니다.
+
+### 4. 확인
+
+```bash
+.venv/bin/python scripts/check_prereqs.py gcp           # 항목별 OK / WARN / FAIL (서버는 server)
+.venv/bin/python collectors/gcp_exporter.py --dry-run   # 서버로 보내지 않고 수집 결과만 출력
+curl "http://<서버>:8000/resources?cloud=GCP"
+```
+
+`.venv`는 설치 스크립트가 만든 가상환경입니다. 설치 스크립트 없이 직접 구성한 기존 운영 VM은 그 VM의 파이썬으로 실행합니다 (예: GCP VM은 `~/finops-env/bin/python3`).
+
+---
+
+## API
+
+| 메서드 | 경로 | 설명 |
+|--------|------|------|
+| GET | `/health` | 상태 확인 |
+| POST · GET | `/resources` | 자원 지표 저장 · 조회 (`?cloud=AWS`) |
+| POST · GET | `/costs` | 비용 레코드 저장 · 조회 |
+| POST · GET | `/unused-resources` | 미사용 리소스 저장 · 조회 |
+| GET | `/anomalies` | 이상탐지 결과 |
+| GET | `/recommendations` | 최적화 추천 결과 |
+| GET | `/forecast` | 비용 예측 |
+| GET | `/cost-by-owner` | 소유자 규칙(`allocation_rules`)별 비용 합계 |
+| POST | `/ask` | 챗봇 질문 (JSON) |
+| POST | `/slack/ask`, `/slack/interact` | Slack `/finops` 명령과 버튼 (서명 검증) |
+
+---
+
+## 데이터 스키마
+
+세 클라우드의 필드명과 계산 방식을 하나로 맞췄습니다 (`decisions/0001`, `0002`). 전체 정의는 `db/schema.sql`에 있습니다.
+
+| 테이블 | 내용 | 주기 |
+|--------|------|------|
+| `resource_metrics` | 인스턴스별 CPU · 메모리 · 디스크 구간 평균(%), 사양 | 5분 |
+| `cost_records` | 클라우드 · 날짜 · 서비스별 비용(USD) | 하루 |
+| `anomaly_results` | 지표별 이상 여부(3σ, MAD), 점수 | 10분 |
+| `recommendations` | 다운사이즈 · 유지 · 약정 할인 전환 추천과 이유 | 하루 |
+| `unused_resources` | 미사용 디스크 · IP | 하루 |
+| `cost_forecast` | 향후 7일 예측값과 상·하한 | 하루 |
+| `allocation_rules` | 인스턴스 → 소유자 매핑 (핵심 인프라는 다운사이즈 추천에서 제외) | 수동 |
 
 ---
 
@@ -63,16 +142,21 @@ ml/ 아래 배치 스크립트들이 주기적으로(또는 수동 실행으로)
 
 ```
 CloudFit/
-├── collectors/           # 클라우드별 수집기 (aws_exporter.py, azure_exporter.py, gcp_exporter.py)
-├── server/                # FastAPI 중앙 서버 (main.py, database.py, Dockerfile)
-├── db/schema.sql           # PostgreSQL 테이블 정의 (resource_metrics, cost_records)
-├── tests/                  # 수집기별 단위 테스트
-├── diary/                  # 팀원별 작업 일지 (YYYY-MM-DD-weekNN-{이름}.md)
-├── runbook/                 # 설치·실행·복구 절차 문서
-├── decisions/                # 기술/설계 결정 기록
-├── incidents/                 # 장애 기록 (발생 시 작성)
-├── evidence/                   # 검증 캡처 이미지
-└── docker-compose.yml          # DB + 서버 통합 실행 정의
+├── collectors/        # 클라우드별 수집기, 미사용 탐지기, 공통 설정(cloud_config.py)
+├── server/            # FastAPI 서버, 예산 알림, Slack 알림(notifier.py)
+├── ml/                # 이상탐지 학습·판정, 비용 예측, 최적화 추천
+├── db/                # PostgreSQL 스키마
+├── dashboard/         # Grafana 대시보드
+├── grafana/           # Grafana 자동 설정(데이터소스·대시보드)
+├── scripts/           # 설치 스크립트, 사전 점검, cron 템플릿, 에이전트 설정
+├── requirements/      # 클라우드별 최소 패키지 (루트 requirements.txt가 버전 기준)
+├── tests/             # 단위 테스트
+├── data/synthetic/    # 합성 데이터 생성·검증
+├── runbook/           # 설치·운영 절차
+├── decisions/         # 설계 결정 기록
+├── incidents/         # 장애 기록
+├── diary/             # 팀원별 작업 일지
+└── evidence/          # 검증 캡처
 ```
 
 ---
@@ -81,111 +165,43 @@ CloudFit/
 
 | 영역 | 기술 |
 |------|------|
-| 언어 | Python 3.11+ |
-| 백엔드 | FastAPI, asyncpg, SQLAlchemy(async) |
-| DB | PostgreSQL 15 (Docker) |
-| AWS 수집 | boto3 (CloudWatch, Cost Explorer) |
-| Azure 수집 | azure-mgmt-monitor, azure-monitor-query, azure-mgmt-costmanagement |
-| GCP 수집 | google-cloud-monitoring, google-api-python-client, BigQuery(billing export) |
-| 컨테이너 | Docker, Docker Compose |
-| 테스트 | pytest / unittest |
-| (예정) ML | scikit-learn (Isolation Forest) — 7주차부터 |
-| (예정) 시각화 | Grafana — 8주차부터 |
+| 언어 | Python 3.10+ (설치 스크립트 기준) |
+| 서버 | FastAPI, SQLAlchemy(async), asyncpg |
+| DB | PostgreSQL 15 |
+| 시각화 | Grafana (자동 설정 시 13.1.8 고정) |
+| ML | scikit-learn(Isolation Forest), Prophet, pandas |
+| AWS | boto3 (CloudWatch, Cost Explorer, EC2, Price List) |
+| Azure | azure-identity, azure-mgmt-monitor·compute·network·costmanagement, azure-monitor-query |
+| GCP | google-cloud-monitoring·compute·bigquery(billing export), google-api-python-client |
+| 운영 | Docker Compose, cron, Slack Webhook·슬래시 명령 |
 
 ---
 
-## 공통 데이터 스키마
+## 테스트
 
-세 명의 수집기가 각자 다른 필드명/계산 방식을 쓰다가 3주차 팀 미팅에서 GCP 코드를 기준으로 통일했습니다 (`decisions/0001-common-schema.md`).
-
-**resource_metrics** (5분 간격, 구간 전체 평균값)
-
-| 컬럼 | 설명 |
-|------|------|
-| `cloud` | `AWS` / `Azure` / `GCP` |
-| `instance_id` | 인스턴스 식별자 |
-| `timestamp` | 수집 시각 (TIMESTAMPTZ) |
-| `cpu_avg`, `memory_avg`, `disk_avg` | 구간 평균 사용률(%) |
-| `instance_type`, `vcpu`, `ram_gb` | 인스턴스 사양 |
-
-**cost_records** (하루 1회, 서비스별 여러 행 — `decisions/0002-cost-schema.md`)
-
-| 컬럼 | 설명 |
-|------|------|
-| `cloud`, `date`, `service` | 클라우드 / 날짜 / 서비스명 |
-| `cost_usd`, `currency` | 비용(USD 환산), 통화 |
-| `granularity` | 현재 `DAILY` 고정 |
-
-자원 데이터와 비용 데이터는 수집 주기(5분 vs 하루)와 단위(% vs USD)가 달라 별도 테이블로 분리했습니다.
-
----
-
-## 시작하기
-
-**0. 환경 설정** — `.env.example`을 복사해 `.env`로 만들고 값을 채운다. 계정·리전·인스턴스처럼
-환경마다 다른 값은 코드가 아니라 `.env`에서 읽으며, 필수 값이 빠지면 어떤 키가 빠졌는지 알려주고 종료한다.
 ```bash
-cp .env.example .env
-```
-새 환경에 처음부터 설치하려면 명령 모음 `runbook/quick-commands.md`와 상세 가이드 `runbook/new-environment-setup.md`, cron 설정은 `runbook/crontab-reference.md`,
-전체 이식 계획은 `decisions/0015`를 참고.
-
-**1. 중앙 서버 + DB 실행**
-```bash
-docker compose up --build
-curl http://localhost:8000/health   # {"status":"ok"} 확인
+python -m pytest tests -q
 ```
 
-**2. 수집기 실행 (각자 담당 클라우드에서)**
-```bash
-# 포맷만 확인 (서버 전송 없음)
-python3 collectors/gcp_exporter.py --dry-run
-
-# 실제 서버 전송
-python3 collectors/gcp_exporter.py
-```
-
-**3. 저장 확인**
-```bash
-curl "http://localhost:8000/resources?cloud=GCP" | python3 -m json.tool
-curl "http://localhost:8000/costs?cloud=GCP" | python3 -m json.tool
-```
-
-원격 VM(AWS EC2 / Azure VM / GCP VM)에서 로컬 서버로 접속해야 하는 경우, 서버 주소가 `localhost`이면 원격에서는 접속이 안 됩니다. 현재는 ngrok 임시 터널을 통해 연결하고 있으며, 무료 ngrok을 쓸 경우 요청 헤더에 `ngrok-skip-browser-warning: true`를 추가해야 합니다.
+수집기 변환, 설정 로더, 비용 수집 플래그, 이상탐지, 사전 점검, cron 설치, Grafana 설정을 다룹니다. 클라우드 SDK가 설치돼 있어야 해당 테스트가 import됩니다.
 
 ---
 
-## 알려진 이슈 / TODO
+## 알려진 한계
 
-- **서버가 임시 상태**: A의 로컬 노트북 + ngrok 터널로만 접속 가능. 클라우드 인스턴스로 정식 배포 필요 (팀 논의 중)
-- **비용 데이터 중복 저장 가능성**: `collect_cost()`가 매번 최근 7일치를 다시 조회해서 전송하는 구조라, 반복 실행 시 겹치는 날짜의 비용 레코드가 중복 저장됨. `(cloud, date, service)` 유니크 제약이나 upsert 로직 필요
-- **인증 없음**: 현재 API에 별도 인증이 없어 URL만 알면 누구나 데이터를 넣을 수 있음. 정식 배포 전 API 키 등 추가 필요
-- **`SERVER_URL` 하드코딩**: `.env` 기반으로 분리하기로 계획했으나 아직 미완료
-- **Azure/AWS 실제 서버 연결 미검증**: GCP는 ngrok으로 실제 DB 저장까지 확인했지만, Azure는 서버 미기동 상태에서의 예외 처리까지만 확인, AWS는 로컬 자체 테스트만 진행함
-- **decisions/0001 갱신 필요**: AWS가 7/24에 계산 방식을 구간 평균으로 이미 수정했는데, 문서에는 아직 "미해결"로 남아있음
-
----
-
-## 앞으로 계획 (요약)
-
-| 주차 | 목표 |
-|------|------|
-| 5주차 | 3개 수집기 → 서버 통합 완료, 합성 데이터 생성기 개발 |
-| 6주차 | 저활용/비용 비효율 탐지 로직, 리사이징 추천 |
-| 7주차 | Isolation Forest 기반 이상탐지 모델 |
-| 8주차 | Grafana 대시보드 |
-| 9~10주차 | 전체 파이프라인 통합 테스트, 실데이터 검증 |
-| 11주차 | GitHub 정리, README/Runbook 최종화 |
-| 12주차~ | 보고서, 논문 초안, 발표 준비, 최종 제출 |
-
-전체 일정은 `project-plan.md`에 자세히 정리되어 있습니다.
+- **API 인증 없음**: 쓰기 API(`POST /resources` 등)에 인증이 없습니다. 팀 내부에서만 쓰는 전제이며, 외부 공개 전에는 API 키가 필요합니다 (`decisions/0015` 단계 3).
+- **DB 포트 공개**: `docker-compose.yml`이 5432를 모든 인터페이스에 엽니다. 보안 그룹으로 막거나 `127.0.0.1`로 묶어야 합니다.
+- **클라우드당 수집 VM 1대**: 수집기는 `.env`에 지정한 인스턴스 하나만 봅니다.
+- **새 환경의 이상탐지는 며칠 뒤부터**: 첫 학습(클라우드당 20건 이상, 최근 7일) 전에는 모델 파일이 없어 이상탐지를 건너뜁니다. 비용 예측도 7일치 이상이 쌓여야 의미가 있습니다.
+- **GCP 비용은 billing export 활성화 이후부터**: BigQuery 내보내기는 과거 데이터를 채워 주지 않습니다.
 
 ---
 
-## 문서 안내
+## 문서
 
-- `diary/` — 팀원별 날짜별 작업 일지
-- `runbook/` — 설치·실행·복구 절차 (재현 가능한 최신 절차 기준)
-- `decisions/` — 기술 선택/설계 결정 근거
-- `incidents/` — 장애 발생 시 재현 절차 포함 기록
-- `evidence/` — 검증 캡처 이미지
+- [`runbook/new-environment-setup.md`](runbook/new-environment-setup.md) — 새 환경 설치 가이드 (서버 → 수집 VM → 확인)
+- [`runbook/quick-commands.md`](runbook/quick-commands.md) — 새 VM에서 칠 명령 순서
+- [`runbook/crontab-reference.md`](runbook/crontab-reference.md) — 운영 VM crontab과 수집 주기
+- [`decisions/`](decisions/) — 설계 결정 기록 (이상탐지 방식, 약정 할인율 실측, 소유자 규칙, 이식 계획 등)
+- [`incidents/`](incidents/) — 장애 기록과 재현 절차
+- `diary/`, `evidence/` — 작업 일지와 검증 캡처
